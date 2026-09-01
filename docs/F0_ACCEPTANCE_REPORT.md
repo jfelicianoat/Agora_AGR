@@ -26,12 +26,12 @@ Estado: listo para aceptación humana; F1 no iniciada.
 Comando final:
 
 ```powershell
-python -m pytest -q --basetemp=tmp\pytest-regression
+python -m pytest -q --basetemp=tmp\pytest-process-full
 ```
 
-Resultado: **20 passed in 0.44s**.
+Resultado final: **21 passed in 0.61s**.
 
-La suite cubre las doce pruebas obligatorias de F0 y ocho verificaciones adicionales:
+La suite cubre las doce pruebas obligatorias de F0 y nueve verificaciones adicionales:
 
 1. round-trip CARD preservando metadatos, cuerpo y campos desconocidos;
 2. dos workers y exactamente un claim ganador;
@@ -53,6 +53,7 @@ La suite cubre las doce pruebas obligatorias de F0 y ocho verificaciones adicion
 18. una CARD sin match permanece pendiente;
 19. materialización diaria idempotente;
 20. una planificación semanal perdida no ejecuta *catch-up*.
+21. dos procesos independientes compiten por una CARD y existe exactamente un ganador.
 
 Comprobaciones adicionales:
 
@@ -112,8 +113,9 @@ El detalle y las contradicciones resueltas están en `docs/architecture-f0-f3.md
 
 - No hay GUI Qt/PySide6, API HTTP, runner remoto, AI_Broker, Athena, OAuth, A2A ni WOL: son
   F1–F8 y se mantienen fuera de F0 por diseño.
-- La semántica de claim está probada entre hilos y usa exclusión mutua del sistema de
-  archivos. F2 deberá volver a probarla entre procesos y mediante compare-and-swap HTTP.
+- La semántica de claim está probada entre hilos y procesos independientes mediante
+  exclusión mutua del sistema de archivos. F2 deberá volver a probarla mediante
+  compare-and-swap HTTP.
 - Falta resolver y probar en el PC IA el ciclo de vida real del token y la supervisión del
   broker antes de aceptar F3.
 - El entorno de desarrollo necesita una instalación local sana de `mypy` para reactivar el
