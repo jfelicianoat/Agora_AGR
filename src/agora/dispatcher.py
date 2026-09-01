@@ -77,6 +77,28 @@ class Dispatcher:
                     DispatchOutcome(path.name, status, reason=result.reason or result.status.value)
                 )
                 continue
+            harness_name = getattr(self.launcher, "harness_name", None)
+            if result.profile.harness and harness_name and result.profile.harness != harness_name:
+                outcomes.append(
+                    DispatchOutcome(
+                        path.name,
+                        DispatchStatus.SKIPPED,
+                        result.profile.name,
+                        f"requires {result.profile.harness} harness",
+                    )
+                )
+                continue
+            availability = getattr(self.launcher, "is_available", None)
+            if callable(availability) and not availability(result.profile):
+                outcomes.append(
+                    DispatchOutcome(
+                        path.name,
+                        DispatchStatus.SKIPPED,
+                        result.profile.name,
+                        "compatible runner is unavailable",
+                    )
+                )
+                continue
             if dispatched >= self.max_dispatches:
                 outcomes.append(
                     DispatchOutcome(
