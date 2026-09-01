@@ -2,7 +2,7 @@
 
 Fecha: 2026-09-01  
 Rama: `codex/agora-f0`  
-Estado: listo para aceptación humana; F1 no iniciada.
+Estado: aprobado explícitamente por el usuario; F1 autorizada.
 
 ## Implementado
 
@@ -138,4 +138,4 @@ Get-Content .\tmp\acceptance\KANBAN\done\manual.md
 
 ## Puerta humana
 
-Se requiere aprobación explícita de F0 antes de iniciar F1. No se ha avanzado de fase.
+F0 fue aprobada explícitamente antes de iniciar F1.
