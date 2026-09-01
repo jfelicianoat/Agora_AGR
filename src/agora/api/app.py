@@ -11,6 +11,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, sta
 from fastapi.responses import FileResponse, JSONResponse
 
 from agora.api.contracts import (
+    CancelRequest,
     ClaimRequest,
     CloseRequest,
     CreateCardRequest,
@@ -108,6 +109,16 @@ def create_api(application: AgoraApplication, settings: ApiSettings) -> FastAPI:
     @app.get("/api/v1/cards/{state_name}/{filename}")
     def card(state_name: BoardState, filename: str, _principal: Principal) -> dict[str, object]:
         return remote.card_payload(state_name, filename)
+
+    @app.get("/api/v1/cards/{filename}")
+    def card_status(filename: str, _principal: Principal) -> dict[str, object]:
+        state_name, payload = remote.locate(filename)
+        return {"state": state_name.value, **payload}
+
+    @app.get("/api/v1/cards/{filename}/artifacts/{index}")
+    def card_artifact(filename: str, index: int, _principal: Principal) -> FileResponse:
+        path = remote.artifact_path(filename, index)
+        return FileResponse(path, filename=path.name, media_type="application/octet-stream")
 
     @app.get("/api/v1/profiles")
     def profiles(_principal: Principal) -> dict[str, Any]:
@@ -247,6 +258,26 @@ def create_api(application: AgoraApplication, settings: ApiSettings) -> FastAPI:
             ),
             BoardState.PENDING,
             "card.yielded",
+        )
+
+    @app.post("/api/v1/cards/{filename}/cancel")
+    def cancel_card(
+        filename: str,
+        request: CancelRequest,
+        authenticated: Principal,
+        idempotency_key: IdempotencyKey = None,
+    ) -> JSONResponse:
+        return _mutation(
+            "cancel",
+            filename,
+            request.model_dump(mode="json"),
+            idempotency_key,
+            operation_lock,
+            idempotency,
+            events,
+            lambda: remote.cancel(filename, principal=authenticated, reason=request.reason),
+            BoardState.ARCHIVE,
+            "card.cancelled",
         )
 
     @app.post("/api/v1/admin/blocked/{filename}/unblock")

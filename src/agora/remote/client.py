@@ -61,6 +61,33 @@ class AgoraApiClient:
             raise AgoraApiError(500, "claims response is not a list")
         return tuple(WorkItem.model_validate(item) for item in response)
 
+    def create_card(self, payload: dict[str, Any], *, idempotency_key: str) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            "/api/v1/cards",
+            json=payload,
+            headers={"Idempotency-Key": idempotency_key},
+        )
+
+    def card_status(self, filename: str) -> dict[str, Any]:
+        return self._request("GET", f"/api/v1/cards/{_plain_name(filename)}")
+
+    def cancel_card(
+        self, filename: str, *, reason: str, idempotency_key: str
+    ) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            f"/api/v1/cards/{_plain_name(filename)}/cancel",
+            json={"reason": reason},
+            headers={"Idempotency-Key": idempotency_key},
+        )
+
+    def card_artifact(self, filename: str, index: int) -> bytes:
+        response = self._client.get(f"/api/v1/cards/{_plain_name(filename)}/artifacts/{index}")
+        if response.is_error:
+            raise AgoraApiError(response.status_code, "artifact download failed")
+        return response.content
+
     def download_input(self, resource: InputResource) -> bytes:
         response = self._client.get(resource.download_url)
         if response.is_error:

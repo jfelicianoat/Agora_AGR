@@ -116,7 +116,7 @@ def test_create_idempotency_does_not_duplicate_card(tmp_path: Path) -> None:
     assert replay.json()["replayed"] is True
     assert [path.name for path in application.board.paths(BoardState.PENDING)] == ["remote.md"]
     card = Card.load(application.board.paths(BoardState.PENDING)[0])
-    assert card.metadata["origin"] == "agora"
+    assert card.metadata["origin"] == "test-client"
     assert card.metadata["origin_identity"] == "test-client"
 
 

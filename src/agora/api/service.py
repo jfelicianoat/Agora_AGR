@@ -29,7 +29,7 @@ class RemoteWorkService:
         card = Card.create(
             function=request.function,
             request=request.request,
-            origin="agora",
+            origin=principal,
             inputs=request.inputs,
             destination=request.destination,
             priority=request.priority,
@@ -167,6 +167,33 @@ class RemoteWorkService:
             "body": detail.body,
             "record": detail.record,
         }
+
+    def locate(self, filename: str) -> tuple[BoardState, dict[str, object]]:
+        name = _plain_card_name(filename)
+        for state in BoardState:
+            if (self.board.directory(state) / name).is_file():
+                return state, self.card_payload(state, name)
+        raise FileNotFoundError(f"CARD not found: {name}")
+
+    def cancel(self, filename: str, *, principal: str, reason: str) -> Path:
+        return self.board.cancel(filename, actor=principal, reason=reason)
+
+    def artifact_path(self, filename: str, index: int) -> Path:
+        _state, payload = self.locate(filename)
+        metadata = payload.get("metadata")
+        if not isinstance(metadata, dict):
+            raise FileNotFoundError("CARD payload has no artifacts")
+        paths = metadata.get("paths")
+        if not isinstance(paths, list) or index < 0 or index >= len(paths):
+            raise FileNotFoundError("CARD artifact not found")
+        path = Path(str(paths[index])).resolve()
+        try:
+            path.relative_to(self.application.workspace)
+        except ValueError as exc:
+            raise InvalidTransition("artifact must stay inside Agora workspace") from exc
+        if not path.is_file():
+            raise FileNotFoundError("CARD artifact is missing")
+        return path
 
     def claimed(self, runner_id: str) -> tuple[WorkItem, ...]:
         items: list[WorkItem] = []

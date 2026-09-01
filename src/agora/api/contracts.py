@@ -56,6 +56,10 @@ class UnblockRequest(StrictModel):
     reason: str = Field(min_length=1, max_length=2_000)
 
 
+class CancelRequest(StrictModel):
+    reason: str = Field(min_length=1, max_length=2_000)
+
+
 class InputResource(BaseModel):
     key: str
     filename: str

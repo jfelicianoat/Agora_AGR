@@ -201,6 +201,30 @@ class Board:
         _rename_transition(source, destination)
         return destination
 
+    def cancel(self, filename: str, *, actor: str, reason: str) -> Path:
+        """Cancel a pending or claimed CARD into the durable archive."""
+        name = _card_filename(filename)
+        source = next(
+            (
+                self.directory(state) / name
+                for state in (BoardState.PENDING, BoardState.IN_PROGRESS)
+                if (self.directory(state) / name).is_file()
+            ),
+            None,
+        )
+        if source is None:
+            raise InvalidTransition(f"Cancellable CARD not found: {name}")
+        card = Card.load(source)
+        card.metadata.pop("agent", None)
+        card.metadata.pop("claimed", None)
+        card.metadata["cancelled"] = format_timestamp(utc_now())
+        card.append_record(actor, [f"CARD cancelled: {reason}"])
+        card.save(source)
+        destination = self.directory(BoardState.ARCHIVE) / name
+        _rename_transition(source, destination)
+        _remove_claim_guard(self, name)
+        return destination
+
     def _block_loaded(
         self,
         source: Path,
