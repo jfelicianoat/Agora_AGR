@@ -183,6 +183,24 @@ class Board:
             when=when,
         )
 
+    def unblock(
+        self,
+        filename: str,
+        *,
+        actor: str,
+        reason: str,
+        when: datetime | None = None,
+    ) -> Path:
+        name = _card_filename(filename)
+        source = self.directory(BoardState.BLOCKED) / name
+        card = Card.load(source)
+        card.metadata.pop("blocked", None)
+        card.append_record(actor, [f"CARD unblocked: {reason}"], when=when)
+        card.save(source)
+        destination = self.directory(BoardState.PENDING) / name
+        _rename_transition(source, destination)
+        return destination
+
     def _block_loaded(
         self,
         source: Path,

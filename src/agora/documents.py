@@ -60,14 +60,18 @@ def render_markdown_document(metadata: dict[str, Any], body: str) -> str:
 
 
 def atomic_write_text(path: Path, text: str) -> None:
+    atomic_write_bytes(path, text.encode("utf-8"))
+
+
+def atomic_write_bytes(path: Path, payload: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temp_name = tempfile.mkstemp(
         prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
     )
     temp_path = Path(temp_name)
     try:
-        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as stream:
-            stream.write(text)
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(payload)
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temp_path, path)
