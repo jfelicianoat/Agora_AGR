@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import base64
 import binascii
+import hashlib
+import re
 from dataclasses import asdict
 from pathlib import Path
 
-from agora.api.contracts import CloseRequest, CreateCardRequest, WorkItem
+from agora.api.contracts import CloseRequest, CreateCardRequest, InputResource, WorkItem
 from agora.application import AgoraApplication
 from agora.board import BoardState
 from agora.cards import Card
@@ -59,6 +61,10 @@ class RemoteWorkService:
             ):
                 continue
             card = Card.load(self.board.directory(BoardState.PENDING) / outcome.card)
+            try:
+                inputs = list(self._input_resources(card, outcome.card))
+            except InvalidTransition:
+                continue
             items.append(
                 WorkItem(
                     filename=outcome.card,
@@ -67,6 +73,8 @@ class RemoteWorkService:
                     priority=str(card.metadata.get("priority", "normal")),
                     attempts=card.attempts,
                     profile=outcome.profile,
+                    card_document=card.serialize(),
+                    inputs=inputs,
                 )
             )
         return tuple(items)
@@ -83,9 +91,25 @@ class RemoteWorkService:
         card.save(path)
         return path
 
-    def progress(self, filename: str, runner_id: str, milestones: list[str]) -> Path:
+    def progress(
+        self,
+        filename: str,
+        runner_id: str,
+        milestones: list[str],
+        checkpoint: dict[str, str] | None = None,
+    ) -> Path:
         path = self._owned_claim(filename, runner_id)
+        if checkpoint is not None:
+            allowed = {"system", "task_id", "idempotency_key"}
+            if set(checkpoint) != allowed or any(
+                not value.strip() for value in checkpoint.values()
+            ):
+                raise InvalidTransition("remote checkpoint has invalid fields")
         self.board.progress(path, runner_id, milestones)
+        if checkpoint is not None:
+            card = Card.load(path)
+            card.metadata["remote"] = dict(checkpoint)
+            card.save(path)
         return path
 
     def close(self, filename: str, request: CloseRequest) -> Path:
@@ -105,6 +129,10 @@ class RemoteWorkService:
             target = artifact_root / name
             atomic_write_bytes(target, payload)
             paths.append(target)
+        if request.execution_audit is not None:
+            card = Card.load(claimed)
+            card.metadata["execution"] = request.execution_audit
+            card.save(claimed)
         return self.board.close(
             claimed,
             actor=request.runner_id,
@@ -112,13 +140,20 @@ class RemoteWorkService:
             model=request.model,
         )
 
-    def yield_card(self, filename: str, runner_id: str, reason: str) -> Path:
+    def yield_card(
+        self,
+        filename: str,
+        runner_id: str,
+        reason: str,
+        *,
+        increment_attempts: bool = False,
+    ) -> Path:
         claimed = self._owned_claim(filename, runner_id)
         return self.board.return_pending(
             claimed,
             actor=runner_id,
             reason=f"Remote runner yielded: {reason}",
-            increment_attempts=False,
+            increment_attempts=increment_attempts,
         )
 
     def unblock(self, filename: str, *, principal: str, reason: str) -> Path:
@@ -133,6 +168,41 @@ class RemoteWorkService:
             "record": detail.record,
         }
 
+    def claimed(self, runner_id: str) -> tuple[WorkItem, ...]:
+        items: list[WorkItem] = []
+        for path in self.board.paths(BoardState.IN_PROGRESS):
+            card = Card.load(path)
+            if card.metadata.get("agent") != runner_id:
+                continue
+            profile = card.metadata.get("profile")
+            if not isinstance(profile, str) or not profile:
+                continue
+            items.append(
+                WorkItem(
+                    filename=path.name,
+                    function=card.function,
+                    request=card.request,
+                    priority=str(card.metadata.get("priority", "normal")),
+                    attempts=card.attempts,
+                    profile=profile,
+                    card_document=card.serialize(),
+                    inputs=list(self._input_resources(card, path.name)),
+                )
+            )
+        return tuple(items)
+
+    def input_path(self, filename: str, key: str) -> Path:
+        name = _plain_card_name(filename)
+        for state in (BoardState.PENDING, BoardState.IN_PROGRESS):
+            card_path = self.board.directory(state) / name
+            if not card_path.is_file():
+                continue
+            card = Card.load(card_path)
+            for resource, path in self._input_resources_with_paths(card, name):
+                if resource.key == key:
+                    return path
+        raise FileNotFoundError(f"input not found for CARD {name}: {key}")
+
     def _owned_claim(self, filename: str, runner_id: str) -> Path:
         name = _plain_card_name(filename)
         path = self.board.directory(BoardState.IN_PROGRESS) / name
@@ -140,6 +210,37 @@ class RemoteWorkService:
         if card.metadata.get("agent") != runner_id:
             raise InvalidTransition("runner does not own this claim")
         return path
+
+    def _input_resources(self, card: Card, filename: str) -> tuple[InputResource, ...]:
+        return tuple(
+            resource for resource, _path in self._input_resources_with_paths(card, filename)
+        )
+
+    def _input_resources_with_paths(
+        self, card: Card, filename: str
+    ) -> tuple[tuple[InputResource, Path], ...]:
+        resources: list[tuple[InputResource, Path]] = []
+        for label, candidate in _named_input_paths(card.metadata.get("inputs")):
+            path = candidate if candidate.is_absolute() else self.application.workspace / candidate
+            resolved = path.resolve()
+            try:
+                resolved.relative_to(self.application.workspace)
+            except ValueError as exc:
+                raise InvalidTransition("remote input must stay inside Agora workspace") from exc
+            if not resolved.is_file():
+                continue
+            digest = hashlib.sha256(resolved.read_bytes()).hexdigest()
+            safe_label = re.sub(r"[^a-zA-Z0-9_-]+", "-", label).strip("-") or "input"
+            key = f"{safe_label}-{digest[:12]}"
+            resource = InputResource(
+                key=key,
+                filename=resolved.name,
+                size_bytes=resolved.stat().st_size,
+                sha256=digest,
+                download_url=f"/api/v1/work/{filename}/inputs/{key}",
+            )
+            resources.append((resource, resolved))
+        return tuple(resources)
 
 
 def _plain_card_name(filename: str) -> str:
@@ -154,3 +255,17 @@ def _plain_artifact_name(filename: str) -> str:
     if candidate.name != filename or filename in {".", ".."}:
         raise ValueError("artifact name must not contain a path")
     return filename
+
+
+def _named_input_paths(value: object, prefix: str = "input"):
+    if isinstance(value, str) and value.strip():
+        yield prefix, Path(value)
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            yield from _named_input_paths(item, f"{prefix}-{index}")
+    elif isinstance(value, dict):
+        if isinstance(value.get("path"), str):
+            yield prefix, Path(value["path"])
+        else:
+            for key, item in value.items():
+                yield from _named_input_paths(item, f"{prefix}-{key}")

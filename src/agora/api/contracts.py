@@ -31,6 +31,7 @@ class ClaimRequest(StrictModel):
 class ProgressRequest(StrictModel):
     runner_id: str = Field(min_length=1, max_length=120)
     milestones: list[str] = Field(min_length=1, max_length=100)
+    checkpoint: dict[str, str] | None = None
 
 
 class RemoteArtifact(StrictModel):
@@ -42,15 +43,25 @@ class CloseRequest(StrictModel):
     runner_id: str = Field(min_length=1, max_length=120)
     artifacts: list[RemoteArtifact] = Field(min_length=1, max_length=50)
     model: str | None = Field(default=None, max_length=240)
+    execution_audit: dict[str, Any] | None = None
 
 
 class YieldRequest(StrictModel):
     runner_id: str = Field(min_length=1, max_length=120)
     reason: str = Field(min_length=1, max_length=2_000)
+    increment_attempts: bool = False
 
 
 class UnblockRequest(StrictModel):
     reason: str = Field(min_length=1, max_length=2_000)
+
+
+class InputResource(BaseModel):
+    key: str
+    filename: str
+    size_bytes: int
+    sha256: str
+    download_url: str
 
 
 class WorkItem(BaseModel):
@@ -60,6 +71,8 @@ class WorkItem(BaseModel):
     priority: str
     attempts: int
     profile: str
+    card_document: str = ""
+    inputs: list[InputResource] = Field(default_factory=list)
 
 
 class StateResponse(BaseModel):
@@ -69,6 +82,15 @@ class StateResponse(BaseModel):
 
 
 class RunnerOutcome(BaseModel):
-    status: Literal["completed", "offline", "idle", "lost_claim", "failed"]
+    status: Literal[
+        "completed",
+        "offline",
+        "idle",
+        "lost_claim",
+        "failed",
+        "waiting_attachment",
+        "broker_unavailable",
+        "broker_running",
+    ]
     card: str | None = None
     detail: str = ""

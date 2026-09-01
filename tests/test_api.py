@@ -286,11 +286,14 @@ def test_yield_and_admin_unblock_use_domain_transitions(tmp_path: Path) -> None:
     write_profile(tmp_path / "AGENTS", "summarizer", handles=["summarize"])
     create_card(application.board, "yielded.md")
     client = _client(app)
-    assert client.post(
-        "/api/v1/cards/yielded.md/claim",
-        headers={"Idempotency-Key": "claim-yield"},
-        json={"runner_id": "runner", "profile": "summarizer"},
-    ).status_code == 200
+    assert (
+        client.post(
+            "/api/v1/cards/yielded.md/claim",
+            headers={"Idempotency-Key": "claim-yield"},
+            json={"runner_id": "runner", "profile": "summarizer"},
+        ).status_code
+        == 200
+    )
     yielded = client.post(
         "/api/v1/cards/yielded.md/yield",
         headers={"Idempotency-Key": "yield"},

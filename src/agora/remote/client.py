@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import hashlib
 import ssl
 from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
 
-from agora.api.contracts import WorkItem
+from agora.api.contracts import InputResource, WorkItem
 
 
 class AgoraApiError(RuntimeError):
@@ -54,6 +55,23 @@ class AgoraApiClient:
             raise AgoraApiError(500, "work response is not a list")
         return tuple(WorkItem.model_validate(item) for item in response)
 
+    def claimed(self, runner_id: str) -> tuple[WorkItem, ...]:
+        response = self._request("GET", "/api/v1/claims", params={"runner_id": runner_id})
+        if not isinstance(response, list):
+            raise AgoraApiError(500, "claims response is not a list")
+        return tuple(WorkItem.model_validate(item) for item in response)
+
+    def download_input(self, resource: InputResource) -> bytes:
+        response = self._client.get(resource.download_url)
+        if response.is_error:
+            raise AgoraApiError(response.status_code, "input download failed")
+        payload = response.content
+        if len(payload) != resource.size_bytes:
+            raise AgoraApiError(409, "input size changed during transfer")
+        if hashlib.sha256(payload).hexdigest() != resource.sha256:
+            raise AgoraApiError(409, "input digest changed during transfer")
+        return payload
+
     def claim(
         self, filename: str, *, runner_id: str, profile: str, idempotency_key: str
     ) -> dict[str, Any]:
@@ -71,11 +89,16 @@ class AgoraApiClient:
         runner_id: str,
         milestones: list[str],
         idempotency_key: str,
+        checkpoint: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         return self._request(
             "POST",
             f"/api/v1/cards/{_plain_name(filename)}/progress",
-            json={"runner_id": runner_id, "milestones": milestones},
+            json={
+                "runner_id": runner_id,
+                "milestones": milestones,
+                "checkpoint": checkpoint,
+            },
             headers={"Idempotency-Key": idempotency_key},
         )
 
@@ -87,11 +110,17 @@ class AgoraApiClient:
         artifacts: list[dict[str, str]],
         model: str | None,
         idempotency_key: str,
+        execution_audit: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         return self._request(
             "POST",
             f"/api/v1/cards/{_plain_name(filename)}/close",
-            json={"runner_id": runner_id, "artifacts": artifacts, "model": model},
+            json={
+                "runner_id": runner_id,
+                "artifacts": artifacts,
+                "model": model,
+                "execution_audit": execution_audit,
+            },
             headers={"Idempotency-Key": idempotency_key},
         )
 
@@ -102,11 +131,16 @@ class AgoraApiClient:
         runner_id: str,
         reason: str,
         idempotency_key: str,
+        increment_attempts: bool = False,
     ) -> dict[str, Any]:
         return self._request(
             "POST",
             f"/api/v1/cards/{_plain_name(filename)}/yield",
-            json={"runner_id": runner_id, "reason": reason},
+            json={
+                "runner_id": runner_id,
+                "reason": reason,
+                "increment_attempts": increment_attempts,
+            },
             headers={"Idempotency-Key": idempotency_key},
         )
 

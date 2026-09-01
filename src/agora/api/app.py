@@ -8,7 +8,7 @@ from threading import Lock
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, status
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 from agora.api.contracts import (
     ClaimRequest,
@@ -128,6 +128,18 @@ def create_api(application: AgoraApplication, settings: ApiSettings) -> FastAPI:
     ) -> tuple[WorkItem, ...]:
         return remote.work(tuple(profiles))
 
+    @app.get("/api/v1/claims", response_model=list[WorkItem])
+    def claims(
+        _principal: Principal,
+        runner_id: Annotated[str, Query(min_length=1, max_length=120)],
+    ) -> tuple[WorkItem, ...]:
+        return remote.claimed(runner_id)
+
+    @app.get("/api/v1/work/{filename}/inputs/{key}")
+    def download_input(filename: str, key: str, _principal: Principal) -> FileResponse:
+        path = remote.input_path(filename, key)
+        return FileResponse(path, filename=path.name, media_type="application/octet-stream")
+
     @app.post("/api/v1/cards", status_code=201)
     def create_card(
         request: CreateCardRequest,
@@ -182,7 +194,12 @@ def create_api(application: AgoraApplication, settings: ApiSettings) -> FastAPI:
             operation_lock,
             idempotency,
             events,
-            lambda: remote.progress(filename, request.runner_id, request.milestones),
+            lambda: remote.progress(
+                filename,
+                request.runner_id,
+                request.milestones,
+                request.checkpoint,
+            ),
             BoardState.IN_PROGRESS,
             "card.progressed",
         )
@@ -222,7 +239,12 @@ def create_api(application: AgoraApplication, settings: ApiSettings) -> FastAPI:
             operation_lock,
             idempotency,
             events,
-            lambda: remote.yield_card(filename, request.runner_id, request.reason),
+            lambda: remote.yield_card(
+                filename,
+                request.runner_id,
+                request.reason,
+                increment_attempts=request.increment_attempts,
+            ),
             BoardState.PENDING,
             "card.yielded",
         )
