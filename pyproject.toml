@@ -33,6 +33,7 @@ agora = "agora.cli:main"
 agora-desktop = "agora.desktop.main:main"
 agora-api = "agora.api.main:main"
 agora-runner = "agora.remote.main:main"
+agora-ai-runner = "agora.broker.main:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

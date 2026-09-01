@@ -1,0 +1,147 @@
+"""Loopback-only client for AI_Broker contract 2.9."""
+
+from __future__ import annotations
+
+import time
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+from urllib.parse import urlparse
+
+import httpx
+
+from agora.broker.contracts import (
+    BrokerFileState,
+    BrokerInvocation,
+    BrokerTaskState,
+    validate_capabilities,
+)
+
+_LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
+
+
+class BrokerApiError(RuntimeError):
+    def __init__(self, status_code: int, detail: str) -> None:
+        super().__init__(f"AI_Broker {status_code}: {detail}")
+        self.status_code = status_code
+        self.detail = detail
+
+
+class BrokerTimeout(TimeoutError):
+    pass
+
+
+@dataclass(slots=True)
+class BrokerClient:
+    base_url: str
+    admin_token: str = field(repr=False)
+    timeout: float = 30.0
+    transport: httpx.BaseTransport | None = None
+    sleep: Callable[[float], None] = time.sleep
+    _client: httpx.Client = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        parsed = urlparse(self.base_url)
+        if parsed.scheme != "http" or parsed.hostname not in _LOOPBACK_HOSTS:
+            raise ValueError("X-Admin-Token client is restricted to loopback HTTP")
+        if len(self.admin_token) < 16:
+            raise ValueError("broker credential is unexpectedly short")
+        self._client = httpx.Client(
+            base_url=self.base_url.rstrip("/"),
+            headers={"X-Admin-Token": self.admin_token},
+            timeout=self.timeout,
+            transport=self.transport,
+        )
+
+    def close(self) -> None:
+        self._client.close()
+
+    def health(self) -> bool:
+        response = self._client.get("/health/live")
+        return response.status_code == 200
+
+    def capabilities(self) -> dict[str, Any]:
+        payload = self._request("GET", "/api/v1/capabilities")
+        validate_capabilities(payload)
+        return payload
+
+    def upload_file(self, path: Path) -> BrokerFileState:
+        with path.open("rb") as stream:
+            payload = self._request(
+                "POST",
+                "/api/v1/files",
+                files={"file": (path.name, stream, "application/octet-stream")},
+            )
+        return BrokerFileState.model_validate(payload)
+
+    def file_state(self, file_id: str) -> BrokerFileState:
+        return BrokerFileState.model_validate(self._request("GET", f"/api/v1/files/{file_id}"))
+
+    def wait_file_ready(
+        self,
+        file_id: str,
+        *,
+        timeout_seconds: float,
+        poll_seconds: float = 1.0,
+    ) -> BrokerFileState:
+        deadline = time.monotonic() + timeout_seconds
+        while True:
+            state = self.file_state(file_id)
+            if state.status == "ready":
+                return state
+            if state.status == "failed":
+                raise BrokerApiError(409, f"file conversion failed: {state.error}")
+            if time.monotonic() >= deadline:
+                raise BrokerTimeout(f"file {file_id} was not ready before timeout")
+            self.sleep(poll_seconds)
+
+    def submit(self, payload: dict[str, Any]) -> str:
+        response = self._request("POST", "/api/v1/tasks", json=payload)
+        task_id = response.get("task_id")
+        if not isinstance(task_id, str) or not task_id:
+            raise BrokerApiError(500, "task response omitted task_id")
+        return task_id
+
+    def task(self, task_id: str) -> BrokerTaskState:
+        return BrokerTaskState.model_validate(self._request("GET", f"/api/v1/tasks/{task_id}"))
+
+    def invocations(self, task_id: str) -> tuple[BrokerInvocation, ...]:
+        payload = self._request("GET", f"/api/v1/tasks/{task_id}/invocations")
+        return tuple(BrokerInvocation.model_validate(item) for item in payload.get("items", []))
+
+    def cancel(self, task_id: str) -> BrokerTaskState:
+        return BrokerTaskState.model_validate(self._request("DELETE", f"/api/v1/tasks/{task_id}"))
+
+    def wait_task(
+        self,
+        task_id: str,
+        *,
+        timeout_seconds: float,
+        poll_seconds: float = 1.0,
+    ) -> BrokerTaskState:
+        deadline = time.monotonic() + timeout_seconds
+        while True:
+            state = self.task(task_id)
+            if state.terminal:
+                return state
+            if time.monotonic() >= deadline:
+                raise BrokerTimeout(f"task {task_id} exceeded client wait timeout")
+            self.sleep(poll_seconds)
+
+    def _request(self, method: str, path: str, **kwargs: Any) -> Any:
+        response = self._client.request(method, path, **kwargs)
+        if response.is_error:
+            try:
+                detail = response.json().get("detail", response.text)
+            except ValueError:
+                detail = response.text
+            safe = str(detail).replace(self.admin_token, "[REDACTED]")
+            raise BrokerApiError(response.status_code, safe)
+        return response.json()
+
+    def __enter__(self) -> BrokerClient:
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        self.close()
