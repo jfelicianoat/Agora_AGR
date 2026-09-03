@@ -17,6 +17,9 @@ class BrokerFileState(BrokerModel):
     status: Literal["received", "converting", "ready", "failed"]
     filename: str
     error: dict[str, Any] | None = None
+    # `created: false` = el broker ya tenía estos bytes (dedupe por SHA-256) y
+    # devuelve el mismo `file_id`. Comprobado en vivo el 2026-09-04.
+    created: bool | None = None
 
 
 class BrokerTaskState(BrokerModel):

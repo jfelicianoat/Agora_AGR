@@ -28,10 +28,11 @@ def create_gateway(session: BrokerSession, settings: GatewaySettings) -> FastAPI
     app = FastAPI(title="Agora AI Gateway", version="1.0.0", docs_url=None, redoc_url=None)
 
     @app.middleware("http")
-    async def require_https(request: Request, call_next: Callable[..., Any]):
+    async def require_https(request: Request, call_next: Callable[..., Any]) -> Response:
         if settings.require_https and request.url.scheme != "https":
             return JSONResponse(status_code=400, content={"detail": "HTTPS is required"})
-        return await call_next(request)
+        forwarded: Response = await call_next(request)
+        return forwarded
 
     authenticate = BearerAuthenticator(
         audience=settings.audience,
@@ -53,7 +54,7 @@ def create_gateway(session: BrokerSession, settings: GatewaySettings) -> FastAPI
     install_oauth_endpoints(app, settings.oauth_authority)
 
     @app.exception_handler(BrokerApiError)
-    async def broker_error(_request: Request, exc: BrokerApiError):
+    async def broker_error(_request: Request, exc: BrokerApiError) -> Response:
         code, error = _broker_error(exc.status_code)
         return JSONResponse(
             status_code=code,
@@ -61,14 +62,14 @@ def create_gateway(session: BrokerSession, settings: GatewaySettings) -> FastAPI
         )
 
     @app.exception_handler(BrokerTimeout)
-    async def broker_timeout(_request: Request, exc: BrokerTimeout):
+    async def broker_timeout(_request: Request, exc: BrokerTimeout) -> Response:
         return JSONResponse(
             status_code=504,
             content={"error": "broker_timeout", "error_description": str(exc)},
         )
 
     @app.exception_handler(httpx.RequestError)
-    async def broker_unavailable(_request: Request, _exc: httpx.RequestError):
+    async def broker_unavailable(_request: Request, _exc: httpx.RequestError) -> Response:
         return JSONResponse(
             status_code=503,
             content={"error": "broker_unavailable", "error_description": "AI service unavailable"},
@@ -80,10 +81,13 @@ def create_gateway(session: BrokerSession, settings: GatewaySettings) -> FastAPI
 
     @app.get("/api/v1/capabilities")
     def capabilities(_principal: ReadPrincipal) -> dict[str, Any]:
-        return session.call("capabilities")
+        payload: dict[str, Any] = session.call("capabilities")
+        return payload
 
     @app.post("/api/v1/files", status_code=status.HTTP_202_ACCEPTED)
-    async def upload(request: Request, filename: Filename, _principal: SubmitPrincipal):
+    async def upload(
+        request: Request, filename: Filename, _principal: SubmitPrincipal
+    ) -> dict[str, Any]:
         safe_name = Path(filename).name
         if not safe_name or safe_name in {".", ".."}:
             raise HTTPException(status_code=422, detail="X-Filename is invalid")
@@ -96,11 +100,15 @@ def create_gateway(session: BrokerSession, settings: GatewaySettings) -> FastAPI
         with tempfile.TemporaryDirectory(prefix="agora-gateway-") as directory:
             temporary = Path(directory) / safe_name
             temporary.write_bytes(body)
-            return session.call("upload_file", temporary).model_dump(mode="json")
+            accepted: dict[str, Any] = session.call("upload_file", temporary).model_dump(
+                mode="json"
+            )
+            return accepted
 
     @app.get("/api/v1/files/{file_id}")
     def file_state(file_id: str, _principal: ReadPrincipal) -> dict[str, Any]:
-        return session.call("file_state", file_id).model_dump(mode="json")
+        payload: dict[str, Any] = session.call("file_state", file_id).model_dump(mode="json")
+        return payload
 
     @app.post("/api/v1/tasks", status_code=status.HTTP_202_ACCEPTED)
     def submit(payload: dict[str, Any], principal: SubmitPrincipal) -> dict[str, str]:
@@ -123,7 +131,8 @@ def create_gateway(session: BrokerSession, settings: GatewaySettings) -> FastAPI
 
     @app.get("/api/v1/tasks/{task_id}")
     def task(task_id: str, _principal: ReadPrincipal) -> dict[str, Any]:
-        return session.call("task", task_id).model_dump(mode="json")
+        payload: dict[str, Any] = session.call("task", task_id).model_dump(mode="json")
+        return payload
 
     @app.get("/api/v1/tasks/{task_id}/invocations")
     def invocations(task_id: str, _principal: ReadPrincipal) -> dict[str, Any]:
@@ -154,7 +163,8 @@ def create_gateway(session: BrokerSession, settings: GatewaySettings) -> FastAPI
 
     @app.delete("/api/v1/tasks/{task_id}")
     def cancel(task_id: str, _principal: CancelPrincipal) -> dict[str, Any]:
-        return session.call("cancel", task_id).model_dump(mode="json")
+        payload: dict[str, Any] = session.call("cancel", task_id).model_dump(mode="json")
+        return payload
 
     return app
 

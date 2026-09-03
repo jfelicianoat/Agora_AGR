@@ -42,10 +42,11 @@ class GatewayClient:
         self._client.close()
 
     def health(self) -> bool:
-        return self._request("GET", "/api/v1/health").get("status") == "ok"
+        payload: dict[str, Any] = self._request("GET", "/api/v1/health")
+        return payload.get("status") == "ok"
 
     def capabilities(self) -> dict[str, Any]:
-        payload = self._request("GET", "/api/v1/capabilities")
+        payload: dict[str, Any] = self._request("GET", "/api/v1/capabilities")
         validate_capabilities(payload)
         return payload
 

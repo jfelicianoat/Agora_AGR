@@ -70,7 +70,8 @@ def test_two_remote_claims_have_exactly_one_winner(tmp_path: Path) -> None:
                 headers={"Idempotency-Key": f"claim-{runner}"},
                 json={"runner_id": runner, "profile": "summarizer"},
             )
-            return response.status_code
+            status: int = response.status_code
+            return status
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         statuses = list(pool.map(claim, ("runner-a", "runner-b")))
@@ -300,6 +301,7 @@ def test_yield_and_admin_unblock_use_domain_transitions(tmp_path: Path) -> None:
         json={"runner_id": "runner", "reason": "capacity changed"},
     )
     pending = Card.load(application.board.directory(BoardState.PENDING) / "yielded.md")
+    assert pending.source is not None
     application.board.block_pending(
         pending.source,
         actor="test",

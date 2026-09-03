@@ -1,0 +1,45 @@
+# Catálogo de capacidades del tablero.
+#
+# Traduce el `model_capacity` que declara cada PROFILE a política de ejecución
+# del broker. Sin este fichero, todos los perfiles comparten la política global
+# del runner, que es lo que hacía Agora hasta ahora.
+#
+# El runner lo carga con `agora-ai-runner --models <ruta>`, o automáticamente si
+# se llama `models.yml` y está en la raíz de PROFILEs.
+
+version: 1
+
+# Capacidad que se aplica a un PROFILE que no declara `model_capacity`.
+default: standard
+
+capacities:
+  # Trabajo barato y tolerante: resúmenes, extracciones cortas. El broker
+  # enruta a lo que tenga libre.
+  minimum:
+    determinism: routed
+    data_classification: internal
+    max_cost_usd: 0.05
+    timeout_seconds: 600
+    zombie_timeout_seconds: 900
+
+  # El caso normal.
+  standard:
+    determinism: routed
+    data_classification: internal
+    max_cost_usd: 0.50
+    timeout_seconds: 1800
+    zombie_timeout_seconds: 2100
+
+  # Trabajo que hay que poder reproducir: modelo exacto, sin fallback y sin que
+  # el contenido lo vea nadie más. Exige contrato 2.10 en el broker; con uno
+  # anterior estas tarjetas se rechazan antes de encolarse.
+  maximum:
+    determinism: strict
+    data_classification: confidential
+    target_model:
+      provider: ollama
+      deployment: local
+      model: qwen3.8:27b
+    max_cost_usd: 2.00
+    timeout_seconds: 3000
+    zombie_timeout_seconds: 3300

@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from agora import __version__
 from agora.application import AgoraSnapshot, CardDetail
 from agora.board import BoardState
 from agora.dispatcher import DispatchOutcome
@@ -68,7 +69,7 @@ class AgoraMainWindow(QMainWindow):
         self.service = service
         self._snapshot: AgoraSnapshot | None = None
         self.setObjectName("agoraMainWindow")
-        self.setWindowTitle("Agora Desktop")
+        self.setWindowTitle(f"Agora Desktop {__version__}")
         self.resize(1240, 780)
         self._build_ui()
         self._apply_style()
@@ -237,7 +238,9 @@ class AgoraMainWindow(QMainWindow):
         except Exception as exc:
             self.error_summary.setText("Fallo del dispatcher")
             self.error_view.setPlainText(f"{type(exc).__name__}: {exc}")
-            self.tabs.setCurrentWidget(self.error_view.parentWidget())
+            container = self.error_view.parentWidget()
+            if container is not None:
+                self.tabs.setCurrentWidget(container)
         self.refresh()
 
     def _render_board(

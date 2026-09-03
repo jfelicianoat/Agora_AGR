@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 import httpx
 from fastapi.testclient import TestClient
@@ -37,7 +37,8 @@ class InProcessAgoraClient:
         response = self.client.get(resource.download_url)
         if response.is_error:
             raise AgoraApiError(response.status_code, response.text)
-        return response.content
+        raw: bytes = response.content
+        return raw
 
     def claim(self, filename: str, **kwargs: Any) -> dict[str, Any]:
         return self._post(filename, "claim", kwargs)
@@ -67,7 +68,8 @@ class InProcessAgoraClient:
         )
         if response.is_error:
             raise AgoraApiError(response.status_code, response.json().get("detail", response.text))
-        return response.json()
+        body: dict[str, Any] = response.json()
+        return body
 
 
 def _runner(
@@ -96,8 +98,8 @@ def _runner(
     broker = _broker_client(fake)
     selected_policy = policy or BrokerPolicy(timeout_seconds=2, zombie_timeout_seconds=3)
     executor = BrokerExecutor(broker, tmp_path / "AGENTS", selected_policy)
-    return application, AiRunner(  # type: ignore[arg-type]
-        agora,
+    return application, AiRunner(
+        agora,  # type: ignore[arg-type]
         broker,
         executor,
         "ai-runner",
@@ -186,7 +188,9 @@ def test_ready_attachment_is_uploaded_before_claim_and_sent_to_broker(tmp_path: 
     assert outcome.status == "completed"
     done = Card.load(application.board.directory(BoardState.DONE) / "task.md")
     assert done.attempts == 0
-    attachments = fake.submissions[0]["content"]["attachments"]
+    content = fake.submissions[0]["content"]
+    assert isinstance(content, dict)
+    attachments = content["attachments"]
     assert attachments == [
         {
             "type": "broker_file",
@@ -338,5 +342,8 @@ class TimeoutExecutor:
     def __init__(self, policy: BrokerPolicy) -> None:
         self.policy = policy
 
-    def resume(self, _work: WorkItem, _task_id: str):
+    def policy_for_profile_name(self, _name: str) -> BrokerPolicy:
+        return self.policy
+
+    def resume(self, _work: WorkItem, _task_id: str) -> NoReturn:
         raise BrokerTimeout("still running")

@@ -77,6 +77,10 @@ class WorkItem(BaseModel):
     profile: str
     card_document: str = ""
     inputs: list[InputResource] = Field(default_factory=list)
+    # Identidad del tablero que emite la tarjeta. Entra en la clave de
+    # idempotencia del broker para que dos tableros con una tarjeta del mismo
+    # nombre no colisionen. Vacío = tablero anterior a esta versión.
+    board_id: str = ""
 
 
 class StateResponse(BaseModel):

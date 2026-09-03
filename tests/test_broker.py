@@ -10,6 +10,7 @@ from pathlib import Path
 import httpx
 import pytest
 
+from agora.api.contracts import WorkItem
 from agora.board import Board
 from agora.broker import runner as broker_runner_module
 from agora.broker.client import BrokerApiError, BrokerClient
@@ -313,7 +314,7 @@ def test_broker_idempotency_key_avoids_double_billing_for_same_card_attempt(tmp_
     assert checkpoints[0][1] == checkpoints[1][1] == broker_idempotency_key(work)
 
 
-def _work(card: Card):
+def _work(card: Card) -> WorkItem:
     from agora.api.contracts import WorkItem
 
     return WorkItem(

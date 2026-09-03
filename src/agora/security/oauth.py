@@ -404,4 +404,5 @@ def sign_client_assertion(
         },
         private_key,
     )
-    return encoded.decode("ascii")
+    ascii_token: str = encoded.decode("ascii")
+    return ascii_token

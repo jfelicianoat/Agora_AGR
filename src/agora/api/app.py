@@ -7,7 +7,7 @@ from threading import Lock
 from typing import Annotated, Any
 
 from fastapi import FastAPI, Header, HTTPException, Query, Request, Security, status
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 
 from agora.api.contracts import (
     CancelRequest,
@@ -55,13 +55,14 @@ def create_api(application: AgoraApplication, settings: ApiSettings) -> FastAPI:
     app = FastAPI(title="Agora API", version="1.0.0", docs_url=None, redoc_url=None)
 
     @app.middleware("http")
-    async def require_https(request: Request, call_next: Callable[..., Any]):
+    async def require_https(request: Request, call_next: Callable[..., Any]) -> Response:
         if settings.require_https and request.url.scheme != "https":
             return JSONResponse(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 content={"detail": "HTTPS is required"},
             )
-        return await call_next(request)
+        forwarded: Response = await call_next(request)
+        return forwarded
 
     authenticate = BearerAuthenticator(
         settings.audience,
@@ -81,24 +82,24 @@ def create_api(application: AgoraApplication, settings: ApiSettings) -> FastAPI:
         install_oauth_endpoints(app, settings.oauth_authority)
 
     @app.exception_handler(IdempotencyConflict)
-    async def idempotency_conflict(_request: Request, exc: IdempotencyConflict):
+    async def idempotency_conflict(_request: Request, exc: IdempotencyConflict) -> Response:
         return JSONResponse(status_code=409, content={"detail": str(exc)})
 
     @app.exception_handler(ClaimConflict)
     @app.exception_handler(InvalidTransition)
-    async def state_conflict(_request: Request, exc: Exception):
+    async def state_conflict(_request: Request, exc: Exception) -> Response:
         return JSONResponse(status_code=409, content={"detail": str(exc)})
 
     @app.exception_handler(CardFormatError)
-    async def invalid_card(_request: Request, exc: CardFormatError):
+    async def invalid_card(_request: Request, exc: CardFormatError) -> Response:
         return JSONResponse(status_code=422, content={"detail": str(exc)})
 
     @app.exception_handler(FileNotFoundError)
-    async def missing_file(_request: Request, exc: FileNotFoundError):
+    async def missing_file(_request: Request, exc: FileNotFoundError) -> Response:
         return JSONResponse(status_code=404, content={"detail": str(exc)})
 
     @app.exception_handler(ValueError)
-    async def invalid_value(_request: Request, exc: ValueError):
+    async def invalid_value(_request: Request, exc: ValueError) -> Response:
         return JSONResponse(status_code=400, content={"detail": str(exc)})
 
     @app.get("/api/v1/health")

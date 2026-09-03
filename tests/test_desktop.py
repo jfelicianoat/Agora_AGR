@@ -21,14 +21,21 @@ from conftest import create_card, write_profile
 
 @pytest.fixture(scope="module")
 def qt_app() -> Iterator[QApplication]:
-    application = QApplication.instance() or QApplication([])
+    existing = QApplication.instance()
+    application = existing if isinstance(existing, QApplication) else QApplication([])
     yield application
+
+
+def _child(item: QTreeWidgetItem, index: int) -> QTreeWidgetItem:
+    child = item.child(index)
+    assert child is not None, f"el nodo no tiene hijo {index}"
+    return child
 
 
 def _state_item(window: AgoraMainWindow, state: BoardState) -> QTreeWidgetItem:
     for index in range(window.board_tree.topLevelItemCount()):
         item = window.board_tree.topLevelItem(index)
-        if item.data(0, Qt.ItemDataRole.UserRole) == state.value:
+        if item is not None and item.data(0, Qt.ItemDataRole.UserRole) == state.value:
             return item
     raise AssertionError(f"state not rendered: {state.value}")
 
@@ -59,7 +66,7 @@ def test_corrupt_card_is_visible_in_board_and_errors(tmp_path: Path, qt_app: QAp
 
     pending = _state_item(window, BoardState.PENDING)
     assert pending.childCount() == 1
-    assert "⚠" in pending.child(0).text(0)
+    assert "⚠" in _child(pending, 0).text(0)
     assert window.error_summary.text() == "1 error(es) visible(s)"
     assert "broken.md" in window.error_view.toPlainText()
     window.close()
@@ -88,7 +95,7 @@ def test_dispatch_button_completes_card_and_renders_record(
     assert _state_item(window, BoardState.PENDING).childCount() == 0
     done = _state_item(window, BoardState.DONE)
     assert done.childCount() == 1
-    window.board_tree.setCurrentItem(done.child(0))
+    window.board_tree.setCurrentItem(_child(done, 0))
     qt_app.processEvents()
     assert "CARD closed." in window.record_view.toPlainText()
     assert (tmp_path / "artifacts" / "from-desktop.txt").is_file()
@@ -110,7 +117,7 @@ def test_closing_and_reopening_window_preserves_board_state(
     qt_app.processEvents()
 
     assert _state_item(second, BoardState.PENDING).childCount() == 1
-    assert _state_item(second, BoardState.PENDING).child(0).text(0) == "task.md"
+    assert _child(_state_item(second, BoardState.PENDING), 0).text(0) == "task.md"
     second.close()
 
 

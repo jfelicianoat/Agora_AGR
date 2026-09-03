@@ -203,12 +203,14 @@ class InProcessAgoraFacade:
             "/api/v1/cards", json=payload, headers={"Idempotency-Key": idempotency_key}
         )
         response.raise_for_status()
-        return response.json()
+        body: dict[str, Any] = response.json()
+        return body
 
     def card_status(self, filename: str) -> dict[str, Any]:
         response = self.client.get(f"/api/v1/cards/{filename}")
         response.raise_for_status()
-        return response.json()
+        body: dict[str, Any] = response.json()
+        return body
 
     def cancel_card(self, filename: str, *, reason: str, idempotency_key: str) -> dict[str, Any]:
         response = self.client.post(
@@ -217,12 +219,14 @@ class InProcessAgoraFacade:
             headers={"Idempotency-Key": idempotency_key},
         )
         response.raise_for_status()
-        return response.json()
+        body: dict[str, Any] = response.json()
+        return body
 
     def card_artifact(self, filename: str, index: int) -> bytes:
         response = self.client.get(f"/api/v1/cards/{filename}/artifacts/{index}")
         response.raise_for_status()
-        return response.content
+        raw: bytes = response.content
+        return raw
 
 
 def test_athena_can_delegate_disconnect_recover_artifact_and_cancel(tmp_path: Path) -> None:

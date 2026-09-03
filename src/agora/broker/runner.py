@@ -5,7 +5,7 @@ from __future__ import annotations
 import base64
 import tempfile
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -35,6 +35,11 @@ class AiRunner:
     profiles: tuple[str, ...]
     attachment_wait_seconds: float = 5.0
     renew_broker: Callable[[], BrokerClient] | None = None
+    # Adjuntos ya subidos, por tarjeta y digest. Un adjunto que tarda en
+    # convertirse hace que el runner vuelva a sondear; sin esto se reenviaban
+    # los bytes en cada vuelta. El broker deduplica por SHA-256, así que un
+    # reinicio del runner cuesta una subida más, no un fichero huérfano.
+    _uploads: dict[str, dict[str, str]] = field(default_factory=dict, repr=False)
 
     def run_once(self, *, now: datetime | None = None) -> RunnerOutcome:
         try:
@@ -89,8 +94,12 @@ class AiRunner:
                 idempotency_key=f"{attempt}:claim",
             )
         except AgoraApiError as exc:
-            status = "lost_claim" if exc.status_code == 409 else "failed"
-            return RunnerOutcome(status=status, card=selected.filename, detail=str(exc))
+            # Otro runner se la llevó primero: no es un fallo de esta tarjeta.
+            if exc.status_code == 409:
+                return RunnerOutcome(
+                    status="lost_claim", card=selected.filename, detail=str(exc)
+                )
+            return RunnerOutcome(status="failed", card=selected.filename, detail=str(exc))
         return self._execute(selected, attachments, attempt)
 
     def _check_broker(self) -> None:
@@ -107,7 +116,10 @@ class AiRunner:
             current = (now or datetime.now(UTC)).astimezone(UTC)
             if claimed_at is not None:
                 age = (current - claimed_at).total_seconds()
-                if age > self.executor.policy.zombie_timeout_seconds:
+                zombie_after = self.executor.policy_for_profile_name(
+                    work.profile
+                ).zombie_timeout_seconds
+                if age > zombie_after:
                     return self._cancel_zombie(work, task_id)
             try:
                 execution = self.executor.resume(work, task_id)
@@ -188,6 +200,7 @@ class AiRunner:
             )
         except (httpx.HTTPError, AgoraApiError) as exc:
             return RunnerOutcome(status="failed", card=work.filename, detail=str(exc))
+        self._uploads.pop(work.filename, None)
         return RunnerOutcome(status="completed", card=work.filename)
 
     def _cancel_zombie(self, work: WorkItem, task_id: str) -> RunnerOutcome:
@@ -248,6 +261,7 @@ class AiRunner:
             return self.executor.prepare_attachments(
                 tuple(paths),
                 wait_seconds=self.attachment_wait_seconds,
+                uploaded=self._uploads.setdefault(work.filename, {}),
             )
 
 

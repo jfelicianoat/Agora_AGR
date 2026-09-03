@@ -55,8 +55,8 @@ def _certificate_chain(root: Path, stem: str) -> tuple[str, str, str]:
                 key_agreement=False,
                 key_cert_sign=True,
                 crl_sign=True,
-                encipher_only=None,
-                decipher_only=None,
+                encipher_only=False,
+                decipher_only=False,
             ),
             critical=True,
         )
@@ -89,8 +89,8 @@ def _certificate_chain(root: Path, stem: str) -> tuple[str, str, str]:
                 key_agreement=False,
                 key_cert_sign=False,
                 crl_sign=False,
-                encipher_only=None,
-                decipher_only=None,
+                encipher_only=False,
+                decipher_only=False,
             ),
             critical=True,
         )

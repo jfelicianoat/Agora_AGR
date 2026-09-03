@@ -95,7 +95,9 @@ def test_json_output_policy_carries_the_schema_the_broker_demands() -> None:
 
 def test_markdown_policy_never_sends_a_json_schema() -> None:
     """D2: el broker prohíbe campos ajenos; markdown no lleva esquema."""
-    assert "json_schema" not in _request(_policy())["output"]
+    output = _request(_policy())["output"]
+    assert isinstance(output, dict)
+    assert "json_schema" not in output
 
 
 def test_shadow_probe_invocation_does_not_break_strict_determinism() -> None:
@@ -195,7 +197,7 @@ def test_card_is_not_billed_for_the_brokers_routing_exploration(tmp_path: Path) 
     tareas reales `result.usage.invocations` vale 1 mientras el endpoint devuelve 2.
     """
     executor = BrokerExecutor(
-        client=_InvocationsOnlyClient(),
+        client=_InvocationsOnlyClient(),  # type: ignore[arg-type]
         profiles_root=tmp_path,
         policy=_policy(),
     )
@@ -310,7 +312,7 @@ def _request(policy: BrokerPolicy) -> dict[str, object]:
 def test_contract_cost_falls_back_to_contractual_invocations(tmp_path: Path) -> None:
     """D3: sin `result.usage`, sólo se suman las invocaciones de la CARD."""
     executor = BrokerExecutor(
-        client=_InvocationsOnlyClient(),
+        client=_InvocationsOnlyClient(),  # type: ignore[arg-type]
         profiles_root=tmp_path,
         policy=_policy(),
     )

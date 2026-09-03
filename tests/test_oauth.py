@@ -104,7 +104,8 @@ def _token(
     payload = response.json()
     assert payload["token_type"] == "Bearer"
     assert payload["expires_in"] == 60
-    return payload["access_token"]
+    access_token: str = payload["access_token"]
+    return access_token
 
 
 def test_oauth_client_credentials_rejects_missing_and_expired_tokens(tmp_path: Path) -> None:

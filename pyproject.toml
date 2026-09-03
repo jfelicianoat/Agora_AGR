@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agora-atomic-work"
-version = "0.1.0"
+version = "0.2.0"
 description = "Desktop-first infrastructure for durable atomic-agent work"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -18,6 +18,7 @@ dev = [
   "mypy>=1.11,<2",
   "pytest>=8.3,<9",
   "ruff>=0.8,<1",
+  "types-PyYAML>=6,<7",
 ]
 desktop = [
   "PySide6>=6.8,<7",
@@ -26,6 +27,15 @@ api = [
   "fastapi>=0.115,<1",
   "httpx>=0.27,<1",
   "uvicorn>=0.32,<1",
+]
+# Lo que necesita el AI Runner en el PC IA, y nada más: no arrastra FastAPI ni
+# uvicorn, que son del tablero. `pydantic` es directo, no vía FastAPI: los
+# contratos del broker y de la API son modelos de pydantic.
+runner = [
+  "httpx>=0.27,<1",
+  "pydantic>=2.7,<3",
+  "cryptography>=44,<47",
+  "keyring>=25,<26",
 ]
 oauth = [
   "Authlib>=1.6,<2",
@@ -40,9 +50,16 @@ agora-runner = "agora.remote.main:main"
 agora-ai-runner = "agora.broker.main:main"
 agora-gateway = "agora.gateway.main:main"
 agora-oauth = "agora.security.main:main"
+agora-certs = "agora.security.certs_main:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+# PEP 561: sin este marcador, quien instale Agora —incluidas sus propias
+# pruebas— ve el paquete como si no tuviera tipos, y `mypy --strict` no puede
+# comprobar nada de lo que importa.
+[tool.setuptools.package-data]
+agora = ["py.typed"]
 
 [tool.pytest.ini_options]
 addopts = "-ra --strict-config --strict-markers"
@@ -61,3 +78,9 @@ select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 python_version = "3.11"
 strict = true
 files = ["src", "tests"]
+
+# Authlib no publica stubs de tipos. Silenciar el import concreto es lo correcto:
+# la alternativa —relajar `strict`— apagaría la puerta para todo el proyecto.
+[[tool.mypy.overrides]]
+module = ["authlib.*"]
+ignore_missing_imports = true

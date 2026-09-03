@@ -11,10 +11,12 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from agora.board import Board, BoardState
 from agora.cards import Card, format_timestamp, utc_now
 from agora.dispatcher import Dispatcher, DispatchOutcome
+from agora.documents import atomic_write_text
 from agora.errors import AgoraError, CardFormatError, ProfileFormatError
 from agora.harnesses import DeterministicHarness, WorkerLauncher
 from agora.profiles import Profile
@@ -101,7 +103,26 @@ class AgoraApplication:
 
     def initialize(self) -> None:
         self.board.initialize()
-        self._log("info", f"BOARD ready at {self.board.root}")
+        self._log("info", f"BOARD ready at {self.board.root} (id {self.instance_id})")
+
+    @property
+    def instance_id(self) -> str:
+        """Identidad estable de este tablero.
+
+        Entra en la clave de idempotencia que Agora manda al broker. Sin ella,
+        dos tableros con una tarjeta del mismo nombre —el de producción y un
+        ensayo, por ejemplo— chocan en el broker con `IDEMPOTENCY_CONFLICT`, y
+        el segundo no puede ejecutar nada. Observado ejecutándolo, no deducido.
+        """
+        marker = self.workspace / ".agora-instance"
+        if marker.is_file():
+            existing = marker.read_text(encoding="utf-8").strip()
+            if existing:
+                return existing
+        generated = uuid4().hex
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_text(marker, f"{generated}\n")
+        return generated
 
     def snapshot(self) -> AgoraSnapshot:
         cards, card_errors = self._card_census()

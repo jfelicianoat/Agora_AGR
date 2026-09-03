@@ -9,6 +9,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
+from agora import __version__
 from agora.broker.client import BrokerClient
 from agora.broker.contracts import BrokerPolicy
 from agora.broker.credentials import (
@@ -18,18 +19,30 @@ from agora.broker.credentials import (
     SessionTokenUnavailable,
 )
 from agora.broker.executor import BrokerExecutor
+from agora.broker.preflight import report, run_preflight
 from agora.broker.runner import AiRunner
 from agora.broker.supervisor import BrokerSupervisor
+from agora.models import ModelCatalog
 from agora.remote.client import AgoraApiClient
 
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="agora-ai-runner")
+    parser.add_argument("--version", action="version", version=f"agora {__version__}")
     parser.add_argument("api_url")
     parser.add_argument("--runner-id", required=True)
     parser.add_argument("--profile", action="append", required=True)
     parser.add_argument("--profiles-root", type=Path, required=True)
     parser.add_argument("--ca-cert", type=Path, required=True)
+    parser.add_argument(
+        "--pin-spki",
+        help="anclaje a la clave pública del tablero, como lo imprime `agora-certs show`",
+    )
+    parser.add_argument(
+        "--models",
+        type=Path,
+        help="catálogo models.yml; por defecto, el de la raíz de PROFILEs si existe",
+    )
     parser.add_argument(
         "--broker-credential",
         choices=("keyring", "env", "supervise"),
@@ -51,6 +64,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--broker-python", type=Path, default=Path(sys.executable))
     parser.add_argument("--poll-seconds", type=float, default=15.0)
     parser.add_argument("--once", action="store_true")
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="comprobar credencial, broker, tablero, PROFILEs y catálogo; no reclama nada",
+    )
     return parser
 
 
@@ -80,6 +98,7 @@ def _supervisor(args: argparse.Namespace) -> BrokerSupervisor:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    print(f"Agora AI runner {__version__} (runner-id {args.runner_id})", file=sys.stderr)
     agora_token = os.environ.get(args.token_env)
     if not agora_token:
         raise SystemExit(f"Missing Agora credential in environment variable {args.token_env}")
@@ -107,12 +126,38 @@ def main(argv: list[str] | None = None) -> int:
     print(f"AI_Broker credential source: {origin}", file=sys.stderr)
 
     policy = BrokerPolicy()
+    profiles_root = args.profiles_root.resolve()
+    catalog = (
+        ModelCatalog.load(args.models.resolve())
+        if args.models is not None
+        else ModelCatalog.discover(profiles_root)
+    )
+    print(
+        "model catalog: "
+        + (f"{catalog.source} ({', '.join(sorted(catalog.capacities))})" if catalog else "none"),
+        file=sys.stderr,
+    )
     with AgoraApiClient(
         args.api_url,
         agora_token,
         verify=str(args.ca_cert.resolve()),
+        pin_spki_sha256=args.pin_spki,
     ) as agora:
-        executor = BrokerExecutor(broker, args.profiles_root.resolve(), policy)
+        if args.check:
+            checks = run_preflight(
+                version=__version__,
+                credential_origin=origin,
+                broker=broker,
+                agora=agora,
+                profiles_root=profiles_root,
+                catalog=catalog,
+                profiles=tuple(args.profile),
+            )
+            broker.close()
+            if supervisor is not None:
+                supervisor.stop()
+            return report(checks)
+        executor = BrokerExecutor(broker, profiles_root, policy, catalog=catalog)
         runner = AiRunner(
             agora,
             broker,

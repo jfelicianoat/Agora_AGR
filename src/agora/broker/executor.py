@@ -19,6 +19,7 @@ from agora.broker.contracts import (
 )
 from agora.broker.request_builder import build_broker_request
 from agora.cards import Card
+from agora.models import ModelCatalog, profile_capacity
 from agora.profiles import Profile, load_profiles
 from agora.skills import load_profile_skills
 
@@ -47,18 +48,50 @@ class BrokerExecutor:
     client: BrokerClient
     profiles_root: Path
     policy: BrokerPolicy
+    # Traduce el `model_capacity` del PROFILE a política. Sin catálogo, todos
+    # los perfiles comparten `policy`, que es como se comportaba antes.
+    catalog: ModelCatalog | None = None
+
+    def policy_for(self, profile: Profile) -> BrokerPolicy:
+        if self.catalog is None:
+            return self.policy
+        return self.catalog.policy_for(profile_capacity(profile.metadata), self.policy)
+
+    def policy_for_profile_name(self, name: str) -> BrokerPolicy:
+        """Política de un perfil por nombre, para decisiones previas a ejecutar.
+
+        Un perfil desconocido no puede decidir nada, así que manda la política
+        base: el error real saldrá en `_contracts`, con su mensaje.
+        """
+        if self.catalog is None:
+            return self.policy
+        matches = [item for item in load_profiles(self.profiles_root) if item.name == name]
+        return self.policy_for(matches[0]) if len(matches) == 1 else self.policy
 
     def prepare_attachments(
         self,
         paths: tuple[Path, ...],
         *,
         wait_seconds: float,
+        uploaded: dict[str, str] | None = None,
     ) -> tuple[dict[str, Any], ...]:
+        """Sube los adjuntos y espera a que el broker los convierta.
+
+        Un adjunto que tarda en convertirse devuelve `waiting_attachment`, y el
+        runner vuelve a sondear. `uploaded` memoriza el `file_id` por digest para
+        no reenviar los bytes en cada vuelta. No hay `file_id` huérfanos que
+        limpiar: el broker deduplica por SHA-256 y devuelve el mismo
+        identificador con `created: false` (comprobado en vivo el 2026-09-04).
+        """
         attachments: list[dict[str, Any]] = []
         for path in paths:
-            accepted = self.client.upload_file(path)
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            known = uploaded.get(digest) if uploaded is not None else None
+            file_id = known if known is not None else self.client.upload_file(path).file_id
+            if uploaded is not None:
+                uploaded[digest] = file_id
             ready = self.client.wait_file_ready(
-                accepted.file_id,
+                file_id,
                 timeout_seconds=wait_seconds,
             )
             attachments.append(
@@ -79,54 +112,60 @@ class BrokerExecutor:
         checkpoint: Callable[[str, str], None],
     ) -> BrokerExecution:
         card, profile = self._contracts(work)
+        policy = self.policy_for(profile)
         contract = self.client.contract()
         # Rechazar aquí lo que el broker no puede prometer, no al leer la
         # telemetría cuando el contenido ya lo ha visto otro modelo.
-        contract.ensure_supports(self.policy)
+        contract.ensure_supports(policy)
         key = broker_idempotency_key(work)
         skills = load_profile_skills(profile.source.parent, profile.skills)
         payload = build_broker_request(
             profile,
             skills,
             card,
-            policy=self.policy,
+            policy=policy,
             idempotency_key=key,
             attachments=attachments,
             contract=contract,
         )
         task_id = self.client.submit(payload)
         checkpoint(task_id, key)
-        state = self.client.wait_task(task_id, timeout_seconds=self.policy.timeout_seconds)
-        return self.finalize(state, contract=contract)
+        state = self.client.wait_task(task_id, timeout_seconds=policy.timeout_seconds)
+        return self.finalize(state, contract=contract, policy=policy)
 
     def resume(self, work: WorkItem, task_id: str) -> BrokerExecution:
-        self._contracts(work)
-        state = self.client.wait_task(task_id, timeout_seconds=self.policy.timeout_seconds)
-        return self.finalize(state)
+        _card, profile = self._contracts(work)
+        policy = self.policy_for(profile)
+        state = self.client.wait_task(task_id, timeout_seconds=policy.timeout_seconds)
+        return self.finalize(state, policy=policy)
 
     def finalize(
         self,
         state: BrokerTaskState,
         *,
         contract: BrokerCapabilities | None = None,
+        policy: BrokerPolicy | None = None,
     ) -> BrokerExecution:
         if state.status != "completed":
             raise BrokerTaskFailed(state)
+        effective_policy = policy if policy is not None else self.policy
         effective = contract if contract is not None else self.client.contract()
         invocations = self.client.invocations(state.task_id)
         billable = _contract_invocations(invocations)
         determinism: dict[str, Any] | None = None
-        if self.policy.determinism == "strict":
-            determinism = _validate_strict(state, invocations, self.policy)
+        if effective_policy.determinism == "strict":
+            determinism = _validate_strict(state, invocations, effective_policy)
         compression = _validate_prompt_compression(billable, effective)
-        artifacts, deliverable = self._collect_artifacts(state, effective)
-        audit = _audit(state, invocations, self.policy, compression, deliverable, determinism)
+        artifacts, deliverable = self._collect_artifacts(state, effective, effective_policy)
+        audit = _audit(
+            state, invocations, effective_policy, compression, deliverable, determinism
+        )
         model = _model_label(audit.get("served_by"))
         milestones: tuple[str, ...] = (
             f"AI_Broker task completed: {state.task_id}.",
             f"Effective model: {model or 'not reported'}.",
             f"Broker invocations: {len(billable)}; cost USD: {audit['total_cost_usd']:.8f}.",
-            f"Determinism policy: {self.policy.determinism}; "
+            f"Determinism policy: {effective_policy.determinism}; "
             f"prompt compression: {compression['verdict']}.",
             f"Deliverable: {deliverable['name']} via {deliverable['source']}"
             + (f"; sha256 {deliverable['sha256']}." if deliverable.get("sha256") else "."),
@@ -143,6 +182,7 @@ class BrokerExecutor:
         self,
         state: BrokerTaskState,
         contract: BrokerCapabilities,
+        policy: BrokerPolicy,
     ) -> tuple[dict[str, bytes], dict[str, Any]]:
         """Recoge el entregable por la vía canónica y lo que lo acompaña.
 
@@ -152,7 +192,7 @@ class BrokerExecutor:
         """
         if not contract.canonical_artifacts:
             payload = _result_bytes(state.result)
-            suffix = "json" if self.policy.output_format == "json" else "md"
+            suffix = "json" if policy.output_format == "json" else "md"
             name = f"broker-result.{suffix}"
             return (
                 {name: payload},
@@ -216,7 +256,15 @@ class BrokerExecutor:
 
 
 def broker_idempotency_key(work: WorkItem) -> str:
-    raw = f"agora\0{work.filename}\0{work.attempts}\0{work.profile}"
+    """Clave estable por (tablero, tarjeta, intento, perfil).
+
+    El `board_id` es imprescindible: sin él, dos tableros con una tarjeta del
+    mismo nombre producen la misma clave y el broker rechaza el segundo con
+    `IDEMPOTENCY_CONFLICT`, sin poder ejecutar nada. Pasó al ensayar la
+    instalación contra el broker real, con una tarjeta `task.md` que ya existía
+    en otro tablero.
+    """
+    raw = f"agora\0{work.board_id}\0{work.filename}\0{work.attempts}\0{work.profile}"
     return "agora:" + hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 

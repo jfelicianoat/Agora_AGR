@@ -63,7 +63,8 @@ class InProcessClient:
         )
         if response.is_error:
             raise AgoraApiError(response.status_code, response.json().get("detail", response.text))
-        return response.json()
+        body: dict[str, Any] = response.json()
+        return body
 
 
 class SwitchableClient:
@@ -76,7 +77,7 @@ class SwitchableClient:
             raise httpx.ConnectError("runner is offline")
         return self.delegate.work(profiles)
 
-    def __getattr__(self, name: str):
+    def __getattr__(self, name: str) -> Any:
         return getattr(self.delegate, name)
 
 
@@ -92,8 +93,8 @@ def test_offline_runner_leaves_card_pending_then_reconnects_and_completes(tmp_pa
         headers={"Authorization": f"Bearer {TOKEN}"},
     )
     switchable = SwitchableClient(InProcessClient(test_client))
-    runner = RemoteRunner(  # type: ignore[arg-type]
-        switchable,
+    runner = RemoteRunner(
+        switchable,  # type: ignore[arg-type]
         "runner-1",
         ("summarizer",),
         DeterministicRemoteHarness(),

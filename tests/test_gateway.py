@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 from pathlib import Path
+from typing import NoReturn
 
 from fastapi.testclient import TestClient
 
@@ -25,7 +26,9 @@ from test_broker import FakeBroker, _broker_client, _work
 ISSUER = "https://testserver"
 
 
-def _gateway(tmp_path: Path, fake: FakeBroker | None = None):
+def _gateway(
+    tmp_path: Path, fake: FakeBroker | None = None
+) -> tuple[FakeBroker, BrokerSession, TestClient, dict[str, str], str]:
     now = 1_900_000_000
     key = generate_private_key()
     registry = ClientRegistry(tmp_path / "clients.json")
@@ -90,8 +93,9 @@ def test_gateway_rejects_top_level_origin_and_overwrites_nested_spoof(tmp_path: 
     accepted = client.post("/api/v1/tasks", headers=headers, json=_payload())
 
     assert accepted.status_code == 202
-    metadata = broker.submissions[0]["content"]["metadata"]
-    assert metadata["origin"] == "agora-worker"
+    content = broker.submissions[0]["content"]
+    assert isinstance(content, dict)
+    assert content["metadata"]["origin"] == "agora-worker"
 
 
 def test_gateway_renews_dynamic_broker_token_once_after_restart(tmp_path: Path) -> None:
@@ -117,7 +121,7 @@ class _BrokenBroker:
     def __init__(self, code: int) -> None:
         self.code = code
 
-    def capabilities(self):
+    def capabilities(self) -> NoReturn:
         raise BrokerApiError(self.code, "safe broker detail")
 
     def close(self) -> None:
@@ -160,7 +164,7 @@ def test_broker_executor_can_use_gateway_adapter_without_recursive_submission(
     gateway = GatewayClient(
         ISSUER,
         access_token=lambda: token,
-        transport=api_client._transport,  # type: ignore[attr-defined]
+        transport=api_client._transport,
         sleep=lambda _seconds: None,
     )
     write_profile(tmp_path / "AGENTS", "summarizer", handles=["summarize"])
@@ -173,4 +177,6 @@ def test_broker_executor_can_use_gateway_adapter_without_recursive_submission(
 
     assert result.task_id == broker.task_id
     assert len(broker.submissions) == 1
-    assert broker.submissions[0]["content"]["metadata"]["origin"] == "agora-worker"
+    forwarded = broker.submissions[0]["content"]
+    assert isinstance(forwarded, dict)
+    assert forwarded["metadata"]["origin"] == "agora-worker"
