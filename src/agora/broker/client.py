@@ -12,6 +12,8 @@ from urllib.parse import urlparse
 import httpx
 
 from agora.broker.contracts import (
+    BrokerArtifact,
+    BrokerCapabilities,
     BrokerFileState,
     BrokerInvocation,
     BrokerTaskState,
@@ -62,9 +64,11 @@ class BrokerClient:
         return response.status_code == 200
 
     def capabilities(self) -> dict[str, Any]:
-        payload = self._request("GET", "/api/v1/capabilities")
-        validate_capabilities(payload)
-        return payload
+        return self.contract().raw
+
+    def contract(self) -> BrokerCapabilities:
+        """Lo que promete el broker en marcha ahora mismo, validado."""
+        return validate_capabilities(self._request("GET", "/api/v1/capabilities"))
 
     def upload_file(self, path: Path) -> BrokerFileState:
         with path.open("rb") as stream:
@@ -110,6 +114,15 @@ class BrokerClient:
         payload = self._request("GET", f"/api/v1/tasks/{task_id}/invocations")
         return tuple(BrokerInvocation.model_validate(item) for item in payload.get("items", []))
 
+    def artifacts(self, task_id: str) -> tuple[BrokerArtifact, ...]:
+        """Vía canónica del entregable (Client_API.md, 8.3)."""
+        payload = self._request("GET", f"/api/v1/tasks/{task_id}/artifacts")
+        return tuple(BrokerArtifact.model_validate(item) for item in payload.get("items", []))
+
+    def download_artifact(self, task_id: str, artifact_id: str) -> bytes:
+        """Los bytes exactos que produjo el modelo, sin reescrituras de plataforma."""
+        return self._bytes("GET", f"/api/v1/tasks/{task_id}/artifacts/{artifact_id}")
+
     def cancel(self, task_id: str) -> BrokerTaskState:
         return BrokerTaskState.model_validate(self._request("DELETE", f"/api/v1/tasks/{task_id}"))
 
@@ -130,6 +143,12 @@ class BrokerClient:
             self.sleep(poll_seconds)
 
     def _request(self, method: str, path: str, **kwargs: Any) -> Any:
+        return self._send(method, path, **kwargs).json()
+
+    def _bytes(self, method: str, path: str, **kwargs: Any) -> bytes:
+        return self._send(method, path, **kwargs).content
+
+    def _send(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
         response = self._client.request(method, path, **kwargs)
         if response.is_error:
             try:
@@ -138,7 +157,7 @@ class BrokerClient:
                 detail = response.text
             safe = str(detail).replace(self.admin_token, "[REDACTED]")
             raise BrokerApiError(response.status_code, safe)
-        return response.json()
+        return response
 
     def __enter__(self) -> BrokerClient:
         return self

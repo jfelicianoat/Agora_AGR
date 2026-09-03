@@ -1,4 +1,4 @@
-"""Headless AI-PC runner with locally supervised AI_Broker credentials."""
+"""Headless AI-PC runner attached to the AI_Broker that the machine already runs."""
 
 from __future__ import annotations
 
@@ -6,10 +6,17 @@ import argparse
 import os
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 from agora.broker.client import BrokerClient
 from agora.broker.contracts import BrokerPolicy
+from agora.broker.credentials import (
+    BrokerConnection,
+    EnvironmentSessionToken,
+    KeyringSessionToken,
+    SessionTokenUnavailable,
+)
 from agora.broker.executor import BrokerExecutor
 from agora.broker.runner import AiRunner
 from agora.broker.supervisor import BrokerSupervisor
@@ -23,26 +30,39 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--profile", action="append", required=True)
     parser.add_argument("--profiles-root", type=Path, required=True)
     parser.add_argument("--ca-cert", type=Path, required=True)
-    parser.add_argument("--broker-repository", type=Path, required=True)
-    parser.add_argument("--broker-config", type=Path, required=True)
-    parser.add_argument("--broker-python", type=Path, default=Path(sys.executable))
+    parser.add_argument(
+        "--broker-credential",
+        choices=("keyring", "env", "supervise"),
+        default="keyring",
+        help=(
+            "keyring: leer el token de sesión que publica el broker (despliegue real); "
+            "env: token fijado por el operador; "
+            "supervise: Agora lanza el broker como proceso hijo (sólo desarrollo)"
+        ),
+    )
     parser.add_argument("--broker-port", type=int, default=8765)
     parser.add_argument("--token-env", default="AGORA_API_TOKEN")
     parser.add_argument("--broker-token-env", default="AI_BROKER_ADMIN_TOKEN")
+    parser.add_argument("--broker-keyring-service", default="ai-broker")
+    parser.add_argument("--broker-keyring-username", default="session_admin_token")
+    supervise_only = "sólo con --broker-credential supervise"
+    parser.add_argument("--broker-repository", type=Path, help=supervise_only)
+    parser.add_argument("--broker-config", type=Path, help=supervise_only)
+    parser.add_argument("--broker-python", type=Path, default=Path(sys.executable))
     parser.add_argument("--poll-seconds", type=float, default=15.0)
     parser.add_argument("--once", action="store_true")
     return parser
 
 
-def main(argv: list[str] | None = None) -> int:
-    args = _parser().parse_args(argv)
-    agora_token = os.environ.get(args.token_env)
-    if not agora_token:
-        raise SystemExit(f"Missing Agora credential in environment variable {args.token_env}")
-    broker_script = args.broker_repository.resolve() / "scripts" / "run_broker.py"
+def _supervisor(args: argparse.Namespace) -> BrokerSupervisor:
+    if args.broker_repository is None or args.broker_config is None:
+        raise SystemExit(
+            "--broker-credential supervise requires --broker-repository and --broker-config"
+        )
+    repository = args.broker_repository.resolve()
     command = [
         str(args.broker_python.resolve()),
-        str(broker_script),
+        str(repository / "scripts" / "run_broker.py"),
         "--config",
         str(args.broker_config.resolve()),
         "--host",
@@ -50,13 +70,42 @@ def main(argv: list[str] | None = None) -> int:
         "--port",
         str(args.broker_port),
     ]
-    supervisor = BrokerSupervisor(
+    return BrokerSupervisor(
         command,
-        args.broker_repository.resolve(),
+        repository,
         token_env=args.broker_token_env,
         base_url=f"http://127.0.0.1:{args.broker_port}",
     )
-    broker = supervisor.start()
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parser().parse_args(argv)
+    agora_token = os.environ.get(args.token_env)
+    if not agora_token:
+        raise SystemExit(f"Missing Agora credential in environment variable {args.token_env}")
+
+    base_url = f"http://127.0.0.1:{args.broker_port}"
+    supervisor: BrokerSupervisor | None = None
+    if args.broker_credential == "supervise":
+        supervisor = _supervisor(args)
+        broker = supervisor.start()
+        connect: Callable[[], BrokerClient] = supervisor.restart
+        origin = "supervised child process"
+    else:
+        source = (
+            KeyringSessionToken(args.broker_keyring_service, args.broker_keyring_username)
+            if args.broker_credential == "keyring"
+            else EnvironmentSessionToken(args.broker_token_env)
+        )
+        connection = BrokerConnection(source, base_url=base_url)
+        try:
+            broker = connection.connect()
+        except SessionTokenUnavailable as exc:
+            raise SystemExit(f"No local AI_Broker credential: {exc}") from exc
+        connect = connection.connect
+        origin = connection.origin
+    print(f"AI_Broker credential source: {origin}", file=sys.stderr)
+
     policy = BrokerPolicy()
     with AgoraApiClient(
         args.api_url,
@@ -64,21 +113,17 @@ def main(argv: list[str] | None = None) -> int:
         verify=str(args.ca_cert.resolve()),
     ) as agora:
         executor = BrokerExecutor(broker, args.profiles_root.resolve(), policy)
-
-        def renew() -> BrokerClient:
-            return supervisor.restart()
-
         runner = AiRunner(
             agora,
             broker,
             executor,
             args.runner_id,
             tuple(args.profile),
-            renew_broker=renew,
+            renew_broker=connect,
         )
         try:
             while True:
-                if not supervisor.running:
+                if supervisor is not None and not supervisor.running:
                     replacement = supervisor.restart()
                     runner.broker.close()
                     runner.broker = replacement
@@ -92,7 +137,8 @@ def main(argv: list[str] | None = None) -> int:
             return 130
         finally:
             runner.broker.close()
-            supervisor.stop()
+            if supervisor is not None:
+                supervisor.stop()
 
 
 if __name__ == "__main__":

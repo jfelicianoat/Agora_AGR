@@ -13,6 +13,7 @@ import httpx
 
 from agora.broker.client import BrokerApiError, BrokerTimeout
 from agora.broker.contracts import (
+    BrokerArtifact,
     BrokerFileState,
     BrokerInvocation,
     BrokerTaskState,
@@ -47,6 +48,9 @@ class GatewayClient:
         payload = self._request("GET", "/api/v1/capabilities")
         validate_capabilities(payload)
         return payload
+
+    def contract(self) -> Any:
+        return validate_capabilities(self._request("GET", "/api/v1/capabilities"))
 
     def upload_file(self, path: Path) -> BrokerFileState:
         payload = self._request(
@@ -87,6 +91,19 @@ class GatewayClient:
     def invocations(self, task_id: str) -> tuple[BrokerInvocation, ...]:
         payload = self._request("GET", f"/api/v1/tasks/{task_id}/invocations")
         return tuple(BrokerInvocation.model_validate(item) for item in payload.get("items", []))
+
+    def artifacts(self, task_id: str) -> tuple[BrokerArtifact, ...]:
+        payload = self._request("GET", f"/api/v1/tasks/{task_id}/artifacts")
+        return tuple(BrokerArtifact.model_validate(item) for item in payload.get("items", []))
+
+    def download_artifact(self, task_id: str, artifact_id: str) -> bytes:
+        headers = {"Authorization": "Bearer " + self.access_token()}
+        response = self._client.request(
+            "GET", f"/api/v1/tasks/{task_id}/artifacts/{artifact_id}", headers=headers
+        )
+        if response.is_error:
+            raise BrokerApiError(response.status_code, response.text)
+        return response.content
 
     def cancel(self, task_id: str) -> BrokerTaskState:
         return BrokerTaskState.model_validate(self._request("DELETE", f"/api/v1/tasks/{task_id}"))

@@ -13,6 +13,8 @@ import httpx
 
 from agora.api.contracts import RunnerOutcome, WorkItem
 from agora.broker.client import BrokerApiError, BrokerClient, BrokerTimeout
+from agora.broker.contracts import BrokerContractUnsupported
+from agora.broker.credentials import SessionTokenUnavailable
 from agora.broker.executor import (
     BrokerExecution,
     BrokerExecutor,
@@ -46,7 +48,12 @@ class AiRunner:
                 self.broker = replacement
                 self.executor.client = replacement
                 self._check_broker()
-            except (httpx.HTTPError, BrokerApiError, ValueError) as renewed:
+            except (
+                httpx.HTTPError,
+                BrokerApiError,
+                SessionTokenUnavailable,
+                ValueError,
+            ) as renewed:
                 return RunnerOutcome(status="broker_unavailable", detail=str(renewed))
         except (httpx.HTTPError, ValueError) as exc:
             return RunnerOutcome(status="broker_unavailable", detail=str(exc))
@@ -144,6 +151,10 @@ class AiRunner:
 
         try:
             execution = self.executor.execute(work, attachments, checkpoint=checkpoint)
+        except BrokerContractUnsupported as exc:
+            # No es culpa de la tarjeta: devolverla sin gastar intento para que
+            # otro runner —o este mismo tras actualizar el broker— la recoja.
+            return self._yield_unsupported(work, str(exc))
         except (BrokerTaskFailed, BrokerPolicyViolation) as exc:
             return self._yield_failed(work, str(exc))
         except BrokerTimeout as exc:
@@ -194,6 +205,19 @@ class AiRunner:
         except (httpx.HTTPError, BrokerApiError, AgoraApiError) as exc:
             return RunnerOutcome(status="failed", card=work.filename, detail=str(exc))
         return RunnerOutcome(status="failed", card=work.filename, detail="zombie cancelled")
+
+    def _yield_unsupported(self, work: WorkItem, reason: str) -> RunnerOutcome:
+        try:
+            self.agora.yield_card(
+                work.filename,
+                runner_id=self.runner_id,
+                reason=f"Broker contract cannot honour this CARD: {reason}",
+                increment_attempts=False,
+                idempotency_key=f"{_attempt_prefix(self.runner_id, work)}:unsupported",
+            )
+        except (httpx.HTTPError, AgoraApiError) as exc:
+            return RunnerOutcome(status="failed", card=work.filename, detail=str(exc))
+        return RunnerOutcome(status="contract_unsupported", card=work.filename, detail=reason)
 
     def _yield_failed(self, work: WorkItem, reason: str) -> RunnerOutcome:
         try:

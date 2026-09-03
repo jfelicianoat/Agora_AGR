@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import inspect
 import json
 import sys
@@ -22,10 +23,18 @@ from agora.remote import client as remote_client_module
 from agora.skills import load_profile_skills
 from conftest import create_card, write_profile
 
+DELIVERABLE = b"Broker completed the Atomic CARD."
+
 
 class FakeBroker:
-    def __init__(self, token: str = "broker-test-token-0123456789") -> None:
+    def __init__(
+        self,
+        token: str = "broker-test-token-0123456789",
+        *,
+        contract_version: str = "2.10",
+    ) -> None:
         self.token = token
+        self.contract_version = contract_version
         self.file_statuses = ["ready"]
         self.task_statuses = ["completed"]
         self.submissions: list[dict[str, object]] = []
@@ -37,6 +46,7 @@ class FakeBroker:
             {
                 "invocation_id": "inv-1",
                 "role": "single",
+                "contractual": True,
                 "model": self.served_by,
                 "status": "completed",
                 "tokens_input": 100,
@@ -48,11 +58,49 @@ class FakeBroker:
                     "seed_status": "not_requested",
                     "top_p_status": "not_requested",
                 },
+                "prompt_compression": {"requested": "off", "effective": "off"},
                 "execution_fingerprint": {"hash": "fingerprint-1", "components": {}},
                 "created_at": "2026-09-01T12:00:00Z",
                 "updated_at": "2026-09-01T12:00:01Z",
             }
         ]
+        self.artifact_bodies = {"art-final": DELIVERABLE}
+        self.artifacts = [
+            {
+                "artifact_id": "art-final",
+                "artifact_type": "single_output",
+                "filename": "respuesta.md",
+                "media_type": "text/markdown",
+                "size_bytes": len(DELIVERABLE),
+                "sha256": hashlib.sha256(DELIVERABLE).hexdigest(),
+                "created_at": "2026-09-01T12:00:02Z",
+                "download_url": f"/api/v1/tasks/{self.task_id}/artifacts/art-final",
+                "available": True,
+                "final": True,
+            }
+        ]
+
+    @property
+    def capabilities_payload(self) -> dict[str, object]:
+        payload: dict[str, object] = {
+            "contract_version": self.contract_version,
+            "prompt_compression_override": True,
+            "invocation_telemetry": True,
+            "generation_determinism": True,
+            "execution_fingerprint": True,
+            "task_artifacts": True,
+        }
+        if tuple(int(part) for part in self.contract_version.split(".")) >= (2, 10):
+            payload.update(
+                {
+                    "invocation_contract": True,
+                    "prompt_compression_echo": True,
+                    "canonical_artifacts": True,
+                    "auxiliary_invocations": True,
+                    "auxiliary_invocations_optout": True,
+                }
+            )
+        return payload
 
     def handle(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path
@@ -61,16 +109,7 @@ class FakeBroker:
         if request.headers.get("x-admin-token") != self.token:
             return httpx.Response(403, json={"detail": "ADMIN_AUTH_REQUIRED"})
         if path == "/api/v1/capabilities":
-            return httpx.Response(
-                200,
-                json={
-                    "contract_version": "2.9",
-                    "prompt_compression_override": True,
-                    "invocation_telemetry": True,
-                    "generation_determinism": True,
-                    "execution_fingerprint": True,
-                },
-            )
+            return httpx.Response(200, json=self.capabilities_payload)
         if path == "/api/v1/files" and request.method == "POST":
             return httpx.Response(
                 202,
@@ -115,6 +154,13 @@ class FakeBroker:
             )
         if path == f"/api/v1/tasks/{self.task_id}/invocations":
             return httpx.Response(200, json={"task_id": self.task_id, "items": self.invocations})
+        if path == f"/api/v1/tasks/{self.task_id}/artifacts":
+            return httpx.Response(200, json={"task_id": self.task_id, "items": self.artifacts})
+        if path.startswith(f"/api/v1/tasks/{self.task_id}/artifacts/"):
+            body = self.artifact_bodies.get(path.rsplit("/", 1)[-1])
+            if body is None:
+                return httpx.Response(404, json={"detail": "artifact not found"})
+            return httpx.Response(200, content=body)
         if path == f"/api/v1/tasks/{self.task_id}" and request.method == "DELETE":
             self.cancelled.append(self.task_id)
             self.task_statuses = ["cancelled"]

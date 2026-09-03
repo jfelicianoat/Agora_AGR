@@ -8,7 +8,7 @@ from typing import Annotated, Any
 
 import httpx
 from fastapi import FastAPI, Header, HTTPException, Request, Security, status
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 from agora.broker.client import BrokerApiError, BrokerTimeout
 from agora.gateway.session import BrokerSession
@@ -90,17 +90,13 @@ def create_gateway(session: BrokerSession, settings: GatewaySettings) -> FastAPI
         body = await request.body()
         if not body or len(body) > settings.max_upload_bytes:
             raise HTTPException(status_code=413, detail="upload size is invalid")
-        temporary: Path | None = None
-        try:
-            with tempfile.NamedTemporaryFile(
-                prefix="agora-gateway-", suffix="-" + safe_name, delete=False
-            ) as stream:
-                stream.write(body)
-                temporary = Path(stream.name)
+        # El broker registra el nombre del fichero que sube la pasarela: un
+        # temporal `agora-gateway-<aleatorio>-<nombre>` le robaba al cliente el
+        # nombre original. El aislamiento lo da el directorio, no el nombre.
+        with tempfile.TemporaryDirectory(prefix="agora-gateway-") as directory:
+            temporary = Path(directory) / safe_name
+            temporary.write_bytes(body)
             return session.call("upload_file", temporary).model_dump(mode="json")
-        finally:
-            if temporary is not None:
-                temporary.unlink(missing_ok=True)
 
     @app.get("/api/v1/files/{file_id}")
     def file_state(file_id: str, _principal: ReadPrincipal) -> dict[str, Any]:
@@ -133,6 +129,28 @@ def create_gateway(session: BrokerSession, settings: GatewaySettings) -> FastAPI
     def invocations(task_id: str, _principal: ReadPrincipal) -> dict[str, Any]:
         items = session.call("invocations", task_id)
         return {"task_id": task_id, "items": [item.model_dump(mode="json") for item in items]}
+
+    @app.get("/api/v1/tasks/{task_id}/artifacts")
+    def artifacts(task_id: str, _principal: ReadPrincipal) -> dict[str, Any]:
+        items = session.call("artifacts", task_id)
+        return {"task_id": task_id, "items": [item.model_dump(mode="json") for item in items]}
+
+    @app.get("/api/v1/tasks/{task_id}/artifacts/{artifact_id}")
+    def artifact_download(task_id: str, artifact_id: str, _principal: ReadPrincipal) -> Response:
+        listed = {item.artifact_id: item for item in session.call("artifacts", task_id)}
+        artifact = listed.get(artifact_id)
+        if artifact is None:
+            raise HTTPException(status_code=404, detail="artifact not found for this task")
+        payload = session.call("download_artifact", task_id, artifact_id)
+        return Response(
+            content=payload,
+            media_type=artifact.media_type or "application/octet-stream",
+            headers={
+                "Content-Disposition": (
+                    f'attachment; filename="{Path(artifact.filename).name}"'
+                )
+            },
+        )
 
     @app.delete("/api/v1/tasks/{task_id}")
     def cancel(task_id: str, _principal: CancelPrincipal) -> dict[str, Any]:

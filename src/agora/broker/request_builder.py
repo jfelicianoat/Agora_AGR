@@ -1,10 +1,10 @@
-"""Translate Atomic PROFILE + SKILL + CARD into AI_Broker contract 2.9."""
+"""Translate Atomic PROFILE + SKILL + CARD into an AI_Broker task request."""
 
 from __future__ import annotations
 
 from typing import Any
 
-from agora.broker.contracts import BrokerPolicy
+from agora.broker.contracts import BrokerCapabilities, BrokerPolicy
 from agora.cards import Card
 from agora.documents import render_markdown_document
 from agora.profiles import Profile
@@ -19,6 +19,7 @@ def build_broker_request(
     policy: BrokerPolicy,
     idempotency_key: str,
     attachments: tuple[dict[str, Any], ...] = (),
+    contract: BrokerCapabilities | None = None,
 ) -> dict[str, Any]:
     profile_contract = render_markdown_document(profile.metadata, profile.body).strip()
     skill_contracts = "\n\n".join(
@@ -48,7 +49,7 @@ def build_broker_request(
     }
     if policy.determinism == "strict":
         generation.update({"seed": policy.seed, "top_p": 1.0})
-    return {
+    request: dict[str, Any] = {
         "idempotency_key": idempotency_key,
         "request_id": f"agora:{card.source.name if card.source else idempotency_key}",
         "inference_kind": "chat",
@@ -75,6 +76,18 @@ def build_broker_request(
         "prompt_compression": "off",
         "exclude_from_model_learning": False,
     }
+    # Opt-out explícito del sondeo en sombra (Client_API.md, 8.4). Sólo se envía
+    # cuando hace falta y el broker lo anuncia: un campo desconocido en un broker
+    # anterior es un 422, y una tarjeta `strict` ya está cubierta por la garantía
+    # implícita (`target_model` + `fallback_allowed: false`).
+    if (
+        not policy.auxiliary_invocations_allowed
+        and policy.determinism != "strict"
+        and contract is not None
+        and contract.auxiliary_invocations_optout
+    ):
+        request["auxiliary_invocations"] = False
+    return request
 
 
 def _output_section(policy: BrokerPolicy) -> dict[str, Any]:

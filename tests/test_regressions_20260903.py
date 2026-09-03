@@ -17,7 +17,13 @@ from agora.api import ApiSettings, create_api
 from agora.application import AgoraApplication
 from agora.board import BoardState
 from agora.broker.client import BrokerApiError
-from agora.broker.contracts import BrokerInvocation, BrokerPolicy, BrokerTaskState
+from agora.broker.contracts import (
+    BrokerCapabilities,
+    BrokerInvocation,
+    BrokerPolicy,
+    BrokerTaskState,
+    validate_capabilities,
+)
 from agora.broker.executor import (
     BrokerExecutor,
     _contract_invocations,
@@ -99,6 +105,14 @@ def test_shadow_probe_invocation_does_not_break_strict_determinism() -> None:
     comparten task_id, llegan a `completed`, reportan `generation` y pueden usar otro
     modelo. `confidence_judge` además corre con temperatura propia, así que validar la
     política estricta contra él invalidaba tarjetas correctas.
+
+    **Corregido el 2026-09-03 con la respuesta del broker (contrato 2.10):**
+    `confidence_judge` **sí** es contractual —hereda `model_requirements` y se
+    factura—, así que apartarlo infravaloraba el coste. Lo que no hereda son los
+    parámetros de generación: por eso la política estricta exige que **alguna**
+    invocación contractual los cumpla y registra las que no, en lugar de
+    exigírselo a todas. Este doble reproduce un broker 2.9 (sin `contractual`),
+    que es donde sigue haciendo falta la reserva por nombre de rol.
     """
     policy = BrokerPolicy(
         determinism="strict",
@@ -161,8 +175,17 @@ def test_shadow_probe_invocation_does_not_break_strict_determinism() -> None:
         ),
     )
 
-    _validate_strict(state, invocations, policy)
-    assert [item.invocation_id for item in _contract_invocations(invocations)] == ["inv_contract"]
+    verdict = _validate_strict(state, invocations, policy)
+
+    # El sondeo queda fuera; el juez entra y se paga.
+    assert [item.invocation_id for item in _contract_invocations(invocations)] == [
+        "inv_contract",
+        "inv_judge",
+    ]
+    # La determinación la prueba la invocación de la CARD, y la desviación del
+    # juez queda nombrada en vez de darse por buena.
+    assert verdict["verified_by"] == ["inv_contract"]
+    assert [item["role"] for item in verdict["deviations"]] == ["confidence_judge"]
 
 
 def test_card_is_not_billed_for_the_brokers_routing_exploration(tmp_path: Path) -> None:
@@ -237,7 +260,22 @@ def test_yield_reports_the_state_the_card_actually_reached(tmp_path: Path) -> No
 
 
 class _InvocationsOnlyClient:
-    """Sustituto mínimo: `finalize` sólo consulta las invocaciones."""
+    """Sustituto mínimo de un broker 2.9: sin `contractual` ni artefactos canónicos.
+
+    `finalize` sólo consulta las invocaciones porque, sin `canonical_artifacts`,
+    el entregable se sigue leyendo de `result`.
+    """
+
+    def contract(self) -> BrokerCapabilities:
+        return validate_capabilities(
+            {
+                "contract_version": "2.9",
+                "prompt_compression_override": True,
+                "invocation_telemetry": True,
+                "generation_determinism": True,
+                "execution_fingerprint": True,
+            }
+        )
 
     def invocations(self, _task_id: str) -> tuple[BrokerInvocation, ...]:
         return (

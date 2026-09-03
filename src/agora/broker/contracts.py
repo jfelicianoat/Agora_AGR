@@ -1,4 +1,4 @@
-"""Stable Agora-side view of AI_Broker contract 2.9."""
+"""Stable Agora-side view of the AI_Broker contract (2.9 mínimo, 2.10 preferido)."""
 
 from __future__ import annotations
 
@@ -43,6 +43,31 @@ class BrokerInvocation(BrokerModel):
     latency_ms: float | None = None
     generation: dict[str, Any] | None = None
     execution_fingerprint: dict[str, Any] | None = None
+    # Contrato 2.10 (Client_API.md, 8.1). Ausente en 2.9: `None` significa
+    # «este broker no se pronuncia», no «no es contractual».
+    contractual: bool | None = None
+    # Contrato 2.10 (8.5): {"requested": ..., "effective": ...}. `None` en filas
+    # anteriores al 2.10 y en llamadas que no envían prompt de usuario.
+    prompt_compression: dict[str, Any] | None = None
+    content_source: str | None = None
+    excluded_from_model_learning: bool | None = None
+
+
+class BrokerArtifact(BrokerModel):
+    """Fichero producido por una tarea (Client_API.md, 8.3)."""
+
+    artifact_id: str
+    artifact_type: str
+    filename: str
+    media_type: str | None = None
+    size_bytes: int | None = None
+    sha256: str | None = None
+    created_at: str | None = None
+    download_url: str | None = None
+    available: bool = True
+    # `final: true` marca el entregable; una tarea completada tiene exactamente uno.
+    # Ausente en brokers anteriores al 2.10, donde no hay forma de distinguirlo.
+    final: bool | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,6 +84,9 @@ class BrokerPolicy:
     # sin esquema (app/schemas.py: TaskOutput.require_schema_for_json).
     output_schema: dict[str, Any] | None = None
     seed: int = 0
+    # Contrato 2.10, 8.4. `False` pide exclusividad de contenido: sólo el modelo
+    # que responde ve el prompt. `None` = decidir por clasificación de datos.
+    auxiliary_invocations: bool | None = None
 
     def __post_init__(self) -> None:
         if self.timeout_seconds < 1:
@@ -82,6 +110,37 @@ class BrokerPolicy:
             ):
                 raise ValueError("target_model requires provider, deployment and model")
 
+    @property
+    def confidential(self) -> bool:
+        return self.data_classification in {"confidential", "local_only"}
+
+    @property
+    def auxiliary_invocations_allowed(self) -> bool:
+        """Si esta tarjeta tolera que otro modelo vea su contenido.
+
+        Contenido confidencial no lo tolera: el sondeo en sombra respeta la
+        clasificación de datos (sólo modelos locales), pero «local» no es «el
+        modelo aprobado». Ver Client_API.md, 8.4.
+        """
+        if self.auxiliary_invocations is not None:
+            return self.auxiliary_invocations
+        return not self.confidential
+
+    @property
+    def requires_content_exclusivity(self) -> bool:
+        """Tarjetas que exigen que sólo el modelo aprobado vea el contenido.
+
+        `strict` lo exige por definición: fija `target_model` con
+        `fallback_allowed: false`, que en 2.10 apaga el sondeo por garantía
+        implícita. En 2.9 no había tal garantía, así que estas tarjetas deben
+        rechazarse antes de encolarse.
+        """
+        return self.determinism == "strict" or not self.auxiliary_invocations_allowed
+
+
+class BrokerContractUnsupported(RuntimeError):
+    """El broker en marcha no puede prometer lo que la tarjeta exige."""
+
 
 REQUIRED_CAPABILITIES = {
     "prompt_compression_override": True,
@@ -91,12 +150,74 @@ REQUIRED_CAPABILITIES = {
 }
 
 
-def validate_capabilities(payload: dict[str, Any]) -> None:
+@dataclass(frozen=True, slots=True)
+class BrokerCapabilities:
+    """Lo que promete el broker que está en marcha, no lo que dice el documento."""
+
+    version: tuple[int, ...]
+    raw: dict[str, Any]
+
+    @property
+    def invocation_contract(self) -> bool:
+        """`role`/`status` enumerados y `contractual` en cada invocación (8.1)."""
+        return bool(self.raw.get("invocation_contract"))
+
+    @property
+    def prompt_compression_echo(self) -> bool:
+        """Eco `{requested, effective}` por invocación (8.5)."""
+        return bool(self.raw.get("prompt_compression_echo"))
+
+    @property
+    def canonical_artifacts(self) -> bool:
+        """`final: true` marca el entregable en /artifacts (8.3)."""
+        return bool(self.raw.get("canonical_artifacts"))
+
+    @property
+    def task_artifacts(self) -> bool:
+        return bool(self.raw.get("task_artifacts"))
+
+    @property
+    def auxiliary_invocations(self) -> bool:
+        """Si este broker hace sondeo en sombra. Ausente en 2.9: lo hacía."""
+        value = self.raw.get("auxiliary_invocations")
+        return True if value is None else bool(value)
+
+    @property
+    def auxiliary_invocations_optout(self) -> bool:
+        return bool(self.raw.get("auxiliary_invocations_optout"))
+
+    def ensure_supports(self, policy: BrokerPolicy) -> None:
+        """Rechaza aquí lo que el broker no puede prometer, no al leer telemetría.
+
+        Client_API.md, 8.4: «Si tus contratos no las toleran y el broker no ofrece
+        el opt-out, rechaza la tarjeta ahí».
+        """
+        if not policy.requires_content_exclusivity:
+            return
+        if not self.auxiliary_invocations:
+            return  # El operador las tiene apagadas: no hay nada que apagar.
+        if self.version < (2, 10):
+            raise BrokerContractUnsupported(
+                "exclusive-content CARDs require AI_Broker 2.10: contract "
+                f"{'.'.join(str(part) for part in self.version)} probes other "
+                "models under this task_id"
+            )
+        if policy.determinism == "strict":
+            return  # Garantía implícita: target_model + fallback_allowed: false.
+        if not self.auxiliary_invocations_optout:
+            raise BrokerContractUnsupported(
+                "broker performs auxiliary invocations and does not accept the opt-out"
+            )
+
+
+def validate_capabilities(payload: dict[str, Any]) -> BrokerCapabilities:
     version = str(payload.get("contract_version", "0"))
     try:
         version_tuple = tuple(int(part) for part in version.split(".")[:2])
     except ValueError as exc:
         raise ValueError(f"invalid broker contract version: {version}") from exc
+    if len(version_tuple) != 2:
+        raise ValueError(f"invalid broker contract version: {version}")
     if version_tuple < (2, 9):
         raise ValueError(f"AI_Broker contract 2.9 or newer is required; received {version}")
     missing = [
@@ -104,3 +225,4 @@ def validate_capabilities(payload: dict[str, Any]) -> None:
     ]
     if missing:
         raise ValueError("AI_Broker lacks required capabilities: " + ", ".join(missing))
+    return BrokerCapabilities(version_tuple, payload)

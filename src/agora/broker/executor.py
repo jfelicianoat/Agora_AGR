@@ -10,7 +10,13 @@ from typing import Any
 
 from agora.api.contracts import WorkItem
 from agora.broker.client import BrokerApiError, BrokerClient
-from agora.broker.contracts import BrokerInvocation, BrokerPolicy, BrokerTaskState
+from agora.broker.contracts import (
+    BrokerArtifact,
+    BrokerCapabilities,
+    BrokerInvocation,
+    BrokerPolicy,
+    BrokerTaskState,
+)
 from agora.broker.request_builder import build_broker_request
 from agora.cards import Card
 from agora.profiles import Profile, load_profiles
@@ -73,6 +79,10 @@ class BrokerExecutor:
         checkpoint: Callable[[str, str], None],
     ) -> BrokerExecution:
         card, profile = self._contracts(work)
+        contract = self.client.contract()
+        # Rechazar aquí lo que el broker no puede prometer, no al leer la
+        # telemetría cuando el contenido ya lo ha visto otro modelo.
+        contract.ensure_supports(self.policy)
         key = broker_idempotency_key(work)
         skills = load_profile_skills(profile.source.parent, profile.skills)
         payload = build_broker_request(
@@ -82,41 +92,115 @@ class BrokerExecutor:
             policy=self.policy,
             idempotency_key=key,
             attachments=attachments,
+            contract=contract,
         )
         task_id = self.client.submit(payload)
         checkpoint(task_id, key)
         state = self.client.wait_task(task_id, timeout_seconds=self.policy.timeout_seconds)
-        return self.finalize(state)
+        return self.finalize(state, contract=contract)
 
     def resume(self, work: WorkItem, task_id: str) -> BrokerExecution:
         self._contracts(work)
         state = self.client.wait_task(task_id, timeout_seconds=self.policy.timeout_seconds)
         return self.finalize(state)
 
-    def finalize(self, state: BrokerTaskState) -> BrokerExecution:
+    def finalize(
+        self,
+        state: BrokerTaskState,
+        *,
+        contract: BrokerCapabilities | None = None,
+    ) -> BrokerExecution:
         if state.status != "completed":
             raise BrokerTaskFailed(state)
+        effective = contract if contract is not None else self.client.contract()
         invocations = self.client.invocations(state.task_id)
         billable = _contract_invocations(invocations)
+        determinism: dict[str, Any] | None = None
         if self.policy.determinism == "strict":
-            _validate_strict(state, invocations, self.policy)
-        audit = _audit(state, invocations, self.policy)
+            determinism = _validate_strict(state, invocations, self.policy)
+        compression = _validate_prompt_compression(billable, effective)
+        artifacts, deliverable = self._collect_artifacts(state, effective)
+        audit = _audit(state, invocations, self.policy, compression, deliverable, determinism)
         model = _model_label(audit.get("served_by"))
-        result = _result_bytes(state.result)
-        suffix = "json" if self.policy.output_format == "json" else "md"
-        milestones = (
+        milestones: tuple[str, ...] = (
             f"AI_Broker task completed: {state.task_id}.",
             f"Effective model: {model or 'not reported'}.",
             f"Broker invocations: {len(billable)}; cost USD: {audit['total_cost_usd']:.8f}.",
-            f"Determinism policy: {self.policy.determinism}; prompt compression: off.",
+            f"Determinism policy: {self.policy.determinism}; "
+            f"prompt compression: {compression['verdict']}.",
+            f"Deliverable: {deliverable['name']} via {deliverable['source']}"
+            + (f"; sha256 {deliverable['sha256']}." if deliverable.get("sha256") else "."),
         )
-        return BrokerExecution(
-            state.task_id,
-            {f"broker-result.{suffix}": result},
-            model,
-            audit,
-            milestones,
+        if determinism and determinism["deviations"]:
+            # No invalida la tarjeta, pero el Record no puede callarlo.
+            roles = ", ".join(item["role"] for item in determinism["deviations"])
+            milestones += (
+                f"Contractual invocations with their own generation parameters: {roles}.",
+            )
+        return BrokerExecution(state.task_id, artifacts, model, audit, milestones)
+
+    def _collect_artifacts(
+        self,
+        state: BrokerTaskState,
+        contract: BrokerCapabilities,
+    ) -> tuple[dict[str, bytes], dict[str, Any]]:
+        """Recoge el entregable por la vía canónica y lo que lo acompaña.
+
+        Client_API.md, 8.3: `/artifacts` viene tipado y con `sha256`; `result` no
+        tiene esquema y no lo tendrá. Sin `canonical_artifacts` no hay forma de
+        saber cuál de la lista es el entregable, así que se cae a `result`.
+        """
+        if not contract.canonical_artifacts:
+            payload = _result_bytes(state.result)
+            suffix = "json" if self.policy.output_format == "json" else "md"
+            name = f"broker-result.{suffix}"
+            return (
+                {name: payload},
+                {
+                    "name": name,
+                    "source": "result",
+                    "sha256": hashlib.sha256(payload).hexdigest(),
+                    "reason": "broker does not announce canonical_artifacts",
+                },
+            )
+        listed = self.client.artifacts(state.task_id)
+        final = [item for item in listed if item.final and item.available]
+        if len(final) != 1:
+            raise BrokerApiError(
+                500,
+                f"a completed task must expose exactly one final artifact; found {len(final)}",
+            )
+        entregable = final[0]
+        artifacts = {entregable.filename: self._download(state.task_id, entregable)}
+        # Lo demás acompaña: imágenes y salidas de `run_code` que hoy se perdían.
+        for item in listed:
+            if item.final or not item.available or item.filename in artifacts:
+                continue
+            artifacts[item.filename] = self._download(state.task_id, item)
+        return (
+            artifacts,
+            {
+                "name": entregable.filename,
+                "source": "artifacts",
+                "artifact_id": entregable.artifact_id,
+                "artifact_type": entregable.artifact_type,
+                "media_type": entregable.media_type,
+                "sha256": entregable.sha256,
+                "companions": [name for name in artifacts if name != entregable.filename],
+            },
         )
+
+    def _download(self, task_id: str, artifact: BrokerArtifact) -> bytes:
+        payload = self.client.download_artifact(task_id, artifact.artifact_id)
+        if artifact.sha256:
+            digest = hashlib.sha256(payload).hexdigest()
+            if digest.lower() != artifact.sha256.lower():
+                raise BrokerApiError(
+                    500,
+                    f"artifact {artifact.artifact_id} sha256 mismatch: "
+                    f"declared {artifact.sha256}, downloaded {digest}",
+                )
+        return payload
 
     def _contracts(self, work: WorkItem) -> tuple[Card, Profile]:
         card = Card.parse(work.card_document, source=f"remote CARD {work.filename}")
@@ -139,25 +223,28 @@ def broker_idempotency_key(work: WorkItem) -> str:
 # AI_Broker 2.9 materializa el entregable bajo estas claves: app/coordinator.py
 # escribe `result_markdown` y `assistant_content` en todas las estrategias. El resto
 # se tolera sólo por compatibilidad futura; ninguna es la que el broker emite hoy.
-# Roles auxiliares del broker: comparten task_id con la CARD pero no la ejecutan.
-# `shadow_probe` explora enrutado y `confidence_judge` evalúa confianza; ambos
-# llegan a `completed`, reportan `generation` y pueden usar OTRO modelo (verificado
-# en vivo sobre 25 tareas reales el 2026-09-03). Ni validan la política estricta ni
-# se facturan a la tarjeta.
+_RESULT_KEYS = ("result_markdown", "assistant_content", "content", "text", "output", "answer")
+
+# Reserva para brokers anteriores al 2.10, que no marcan `contractual`. El
+# vocabulario real tiene catorce roles y crece, así que nombrar los propios del
+# broker es frágil por definición: en 2.10 esta lista no se usa.
 #
-# Es una lista negra por necesidad: el contrato 2.9 declara `role` como string libre
-# sin enumerado ni marca de «contractual», así que no hay forma de distinguirlos sin
-# nombrarlos. Petición abierta al broker en docs/PETICION_A_AI_BROKER.md.
-NON_CONTRACT_ROLES = frozenset({"shadow_probe", "confidence_judge"})
+# `confidence_judge` NO está aquí: es trabajo de la tarjeta —hereda
+# `model_requirements` y se factura— y apartarlo infravaloraba el coste
+# (Client_API.md, 8.1). Hoy sólo `shadow_probe` es no contractual.
+LEGACY_NON_CONTRACT_ROLES = frozenset({"shadow_probe"})
+
+
+def _is_contractual(item: BrokerInvocation) -> bool:
+    if item.contractual is not None:
+        return item.contractual
+    return item.role not in LEGACY_NON_CONTRACT_ROLES
 
 
 def _contract_invocations(
     invocations: tuple[BrokerInvocation, ...],
 ) -> tuple[BrokerInvocation, ...]:
-    return tuple(item for item in invocations if item.role not in NON_CONTRACT_ROLES)
-
-
-_RESULT_KEYS = ("result_markdown", "assistant_content", "content", "text", "output", "answer")
+    return tuple(item for item in invocations if _is_contractual(item))
 
 
 def _result_bytes(result: dict[str, Any] | None) -> bytes:
@@ -174,25 +261,69 @@ def _result_bytes(result: dict[str, Any] | None) -> bytes:
     )
 
 
+def _validate_prompt_compression(
+    billable: tuple[BrokerInvocation, ...],
+    contract: BrokerCapabilities,
+) -> dict[str, Any]:
+    """El trabajo atómico exige prompt sin podar, y ahora se puede demostrar.
+
+    Client_API.md, 8.5: la aserción es sobre las invocaciones contractuales.
+    Sin `prompt_compression_echo` el broker no acusa recibo, así que se registra
+    como no verificable en vez de afirmar que se cumplió.
+    """
+    if not contract.prompt_compression_echo:
+        return {
+            "requested": "off",
+            "verdict": "unverifiable",
+            "detail": "broker does not announce prompt_compression_echo",
+        }
+    observed: list[str] = []
+    for item in billable:
+        echo = item.prompt_compression
+        if not isinstance(echo, dict):
+            # `null` en llamadas que no envían prompt de usuario: nada que podar.
+            continue
+        effective = echo.get("effective")
+        if effective is None:
+            continue
+        observed.append(str(effective))
+        if effective != "off":
+            raise BrokerPolicyViolation(
+                f"invocation {item.invocation_id} ({item.role}) was compressed "
+                f"with '{effective}' after requesting 'off'"
+            )
+    return {
+        "requested": "off",
+        "verdict": "verified" if observed else "not_reported",
+        "effective": sorted(set(observed)),
+    }
+
+
 def _audit(
     state: BrokerTaskState,
     invocations: tuple[BrokerInvocation, ...],
     policy: BrokerPolicy,
+    compression: dict[str, Any],
+    deliverable: dict[str, Any],
+    determinism: dict[str, Any] | None,
 ) -> dict[str, Any]:
     summary = state.execution_summary or {}
+    auxiliary = [item for item in invocations if not _is_contractual(item)]
     return {
         "system": "ai_broker",
         "task_id": state.task_id,
         "policy": policy.determinism,
-        "prompt_compression": "off",
+        "determinism": determinism,
+        "prompt_compression": compression,
+        "auxiliary_invocations_allowed": policy.auxiliary_invocations_allowed,
         "served_by": summary.get("served_by"),
         "requested_model": summary.get("requested_model"),
         "models_used": summary.get("models_used", []),
         "fallback_used": summary.get("fallback_used"),
         "total_cost_usd": _contract_cost(state, invocations),
-        "exploratory_cost_usd": sum(
-            item.cost_usd for item in invocations if item.role in NON_CONTRACT_ROLES
-        ),
+        "exploratory_cost_usd": sum(item.cost_usd for item in auxiliary),
+        "auxiliary_roles": sorted({item.role for item in auxiliary}),
+        "deliverable": deliverable,
         "invocations": [item.model_dump(mode="json") for item in invocations],
     }
 
@@ -230,31 +361,60 @@ def _model_label(value: object) -> str | None:
     return "/".join(str(item) for item in components if item)
 
 
+def _is_deterministic(item: BrokerInvocation, policy: BrokerPolicy) -> bool:
+    generation = item.generation or {}
+    return (
+        generation.get("temperature") == 0.0
+        and generation.get("seed") == policy.seed
+        and generation.get("seed_status") == "sent"
+        and generation.get("top_p") == 1.0
+        and generation.get("top_p_status") == "sent"
+    )
+
+
 def _validate_strict(
     state: BrokerTaskState,
     invocations: tuple[BrokerInvocation, ...],
     policy: BrokerPolicy,
-) -> None:
+) -> dict[str, Any]:
+    """Comprueba lo que la telemetría permite demostrar, y nombra lo que no.
+
+    Los artefactos no traen `invocation_id` (comprobado en vivo sobre el contrato
+    2.10), así que no hay forma contractual de atar el entregable a una llamada
+    concreta. Lo demostrable es: ninguna invocación contractual salió del modelo
+    aprobado, y al menos una se ejecutó con los parámetros exactos que se
+    pidieron. Una llamada contractual con otros parámetros —el `confidence_judge`
+    puntúa con los suyos— no invalida la tarjeta, pero se registra en el Record
+    en vez de darse por buena en silencio.
+    """
     summary = state.execution_summary or {}
     served = summary.get("served_by")
     target = policy.target_model or {}
     identity = ("provider", "deployment", "model")
     if not isinstance(served, dict) or any(served.get(key) != target.get(key) for key in identity):
         raise BrokerPolicyViolation("strict policy target_model was not the model served")
-    successful = [
-        item
-        for item in _contract_invocations(invocations)
-        if item.status == "completed" and _same_model(item.model, target)
-    ]
+    billable = _contract_invocations(invocations)
+    foreign = [item for item in billable if not _same_model(item.model, target)]
+    if foreign:
+        raise BrokerPolicyViolation(
+            "strict policy content reached other models: "
+            + ", ".join(f"{item.role}@{item.model.get('model')}" for item in foreign)
+        )
+    successful = [item for item in billable if item.status == "completed"]
     if not successful:
         raise BrokerPolicyViolation("strict policy has no successful invocation telemetry")
-    for item in successful:
-        generation = item.generation or {}
-        if (
-            generation.get("temperature") != 0.0
-            or generation.get("seed") != policy.seed
-            or generation.get("seed_status") != "sent"
-            or generation.get("top_p") != 1.0
-            or generation.get("top_p_status") != "sent"
-        ):
-            raise BrokerPolicyViolation("effective generation does not satisfy strict policy")
+    verified = [item for item in successful if _is_deterministic(item, policy)]
+    if not verified:
+        raise BrokerPolicyViolation("effective generation does not satisfy strict policy")
+    return {
+        "verified_by": [item.invocation_id for item in verified],
+        "deviations": [
+            {
+                "invocation_id": item.invocation_id,
+                "role": item.role,
+                "generation": item.generation,
+            }
+            for item in successful
+            if item not in verified
+        ],
+    }

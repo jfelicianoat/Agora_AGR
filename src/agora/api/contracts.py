@@ -95,6 +95,9 @@ class RunnerOutcome(BaseModel):
         "waiting_attachment",
         "broker_unavailable",
         "broker_running",
+        # El broker en marcha no puede prometer lo que la tarjeta exige
+        # (p. ej. exclusividad de contenido en un contrato anterior al 2.10).
+        "contract_unsupported",
     ]
     card: str | None = None
     detail: str = ""
