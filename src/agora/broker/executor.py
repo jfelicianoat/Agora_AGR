@@ -139,10 +139,16 @@ def broker_idempotency_key(work: WorkItem) -> str:
 # AI_Broker 2.9 materializa el entregable bajo estas claves: app/coordinator.py
 # escribe `result_markdown` y `assistant_content` en todas las estrategias. El resto
 # se tolera sólo por compatibilidad futura; ninguna es la que el broker emite hoy.
-# `shadow_probe` es exploración de enrutado del broker (app/shadow_probe.py): comparte
-# task_id con la CARD pero no la ejecuta, puede usar otro modelo y llega a `completed`.
-# Ni valida la política estricta ni se factura a la tarjeta.
-NON_CONTRACT_ROLES = frozenset({"shadow_probe"})
+# Roles auxiliares del broker: comparten task_id con la CARD pero no la ejecutan.
+# `shadow_probe` explora enrutado y `confidence_judge` evalúa confianza; ambos
+# llegan a `completed`, reportan `generation` y pueden usar OTRO modelo (verificado
+# en vivo sobre 25 tareas reales el 2026-09-03). Ni validan la política estricta ni
+# se facturan a la tarjeta.
+#
+# Es una lista negra por necesidad: el contrato 2.9 declara `role` como string libre
+# sin enumerado ni marca de «contractual», así que no hay forma de distinguirlos sin
+# nombrarlos. Petición abierta al broker en docs/PETICION_A_AI_BROKER.md.
+NON_CONTRACT_ROLES = frozenset({"shadow_probe", "confidence_judge"})
 
 
 def _contract_invocations(
@@ -183,12 +189,38 @@ def _audit(
         "requested_model": summary.get("requested_model"),
         "models_used": summary.get("models_used", []),
         "fallback_used": summary.get("fallback_used"),
-        "total_cost_usd": sum(item.cost_usd for item in _contract_invocations(invocations)),
+        "total_cost_usd": _contract_cost(state, invocations),
         "exploratory_cost_usd": sum(
             item.cost_usd for item in invocations if item.role in NON_CONTRACT_ROLES
         ),
         "invocations": [item.model_dump(mode="json") for item in invocations],
     }
+
+
+def _same_model(candidate: object, target: dict[str, Any]) -> bool:
+    """Identidad de modelo del broker: provider + deployment + model."""
+    if not isinstance(candidate, dict):
+        return False
+    return all(
+        candidate.get(key) == target.get(key)
+        for key in ("provider", "deployment", "model")
+    )
+
+
+def _contract_cost(
+    state: BrokerTaskState, invocations: tuple[BrokerInvocation, ...]
+) -> float:
+    """Coste de la CARD, no de lo que el broker explore por su cuenta.
+
+    `result.usage` es la contabilidad contractual del propio broker (excluye los
+    roles auxiliares). Si no viniera, se suman las invocaciones contractuales.
+    """
+    usage = (state.result or {}).get("usage")
+    if isinstance(usage, dict):
+        reported = usage.get("cost_usd")
+        if isinstance(reported, (int, float)) and not isinstance(reported, bool):
+            return float(reported)
+    return sum(item.cost_usd for item in _contract_invocations(invocations))
 
 
 def _model_label(value: object) -> str | None:
@@ -210,7 +242,9 @@ def _validate_strict(
     if not isinstance(served, dict) or any(served.get(key) != target.get(key) for key in identity):
         raise BrokerPolicyViolation("strict policy target_model was not the model served")
     successful = [
-        item for item in _contract_invocations(invocations) if item.status == "completed"
+        item
+        for item in _contract_invocations(invocations)
+        if item.status == "completed" and _same_model(item.model, target)
     ]
     if not successful:
         raise BrokerPolicyViolation("strict policy has no successful invocation telemetry")

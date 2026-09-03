@@ -93,10 +93,12 @@ def test_markdown_policy_never_sends_a_json_schema() -> None:
 
 
 def test_shadow_probe_invocation_does_not_break_strict_determinism() -> None:
-    """D3: `shadow_probe` es exploración de enrutado del broker, no la CARD.
+    """D3: los roles auxiliares del broker no son la CARD.
 
-    Comparte task_id, puede usar otro modelo, no reporta `generation` y llega a
-    `completed`. Validar la política estricta contra él invalidaba tarjetas correctas.
+    Verificado en vivo sobre 25 tareas reales: `shadow_probe` y `confidence_judge`
+    comparten task_id, llegan a `completed`, reportan `generation` y pueden usar otro
+    modelo. `confidence_judge` además corre con temperatura propia, así que validar la
+    política estricta contra él invalidaba tarjetas correctas.
     """
     policy = BrokerPolicy(
         determinism="strict",
@@ -134,10 +136,28 @@ def test_shadow_probe_invocation_does_not_break_strict_determinism() -> None:
         BrokerInvocation(
             invocation_id="inv_probe",
             role="shadow_probe",
-            model={"provider": "ollama", "deployment": "local", "model": "gemma4:12b"},
+            model={
+                "provider": "lmstudio",
+                "deployment": "local",
+                "model": "huihui-qwen3.8-27b-abliterated",
+            },
             status="completed",
             cost_usd=0.75,
-            generation=None,
+            generation={
+                "temperature": 0.0,
+                "seed": 0,
+                "seed_status": "sent",
+                "top_p": 1.0,
+                "top_p_status": "sent",
+            },
+        ),
+        BrokerInvocation(
+            invocation_id="inv_judge",
+            role="confidence_judge",
+            model={"provider": "lmstudio", "deployment": "local", "model": "laguna-xs-2.1"},
+            status="completed",
+            cost_usd=0.50,
+            generation={"temperature": 0.7, "seed_status": "not_requested"},
         ),
     )
 
@@ -146,7 +166,11 @@ def test_shadow_probe_invocation_does_not_break_strict_determinism() -> None:
 
 
 def test_card_is_not_billed_for_the_brokers_routing_exploration(tmp_path: Path) -> None:
-    """D3: el coste del sondeo se registra aparte, no como coste de la tarjeta."""
+    """D3: el coste de la CARD es el que el broker declara en `result.usage`.
+
+    Sumar `/invocations` a mano factura a la tarjeta la exploración del broker: en las
+    tareas reales `result.usage.invocations` vale 1 mientras el endpoint devuelve 2.
+    """
     executor = BrokerExecutor(
         client=_InvocationsOnlyClient(),
         profiles_root=tmp_path,
@@ -161,7 +185,8 @@ def test_card_is_not_billed_for_the_brokers_routing_exploration(tmp_path: Path) 
         )
     )
 
-    assert execution.audit["total_cost_usd"] == pytest.approx(0.25)
+    # `REAL_BROKER_RESULT.usage.cost_usd` es 0.0: es la cifra contractual del broker.
+    assert execution.audit["total_cost_usd"] == pytest.approx(0.0)
     assert execution.audit["exploratory_cost_usd"] == pytest.approx(0.75)
     assert "Broker invocations: 1" in " ".join(execution.milestones)
 
@@ -242,3 +267,25 @@ def _request(policy: BrokerPolicy) -> dict[str, object]:
     profile = Profile.load(root / "AGENTS" / "summarizer" / "PROFILE.md")
     card = Card.load(root / "CARD.md")
     return build_broker_request(profile, (), card, policy=policy, idempotency_key="agora:test")
+
+
+def test_contract_cost_falls_back_to_contractual_invocations(tmp_path: Path) -> None:
+    """D3: sin `result.usage`, sólo se suman las invocaciones de la CARD."""
+    executor = BrokerExecutor(
+        client=_InvocationsOnlyClient(),
+        profiles_root=tmp_path,
+        policy=_policy(),
+    )
+    result = {
+        key: value for key, value in REAL_BROKER_RESULT.items() if key != "usage"
+    }
+    execution = executor.finalize(
+        BrokerTaskState(
+            task_id="task_1",
+            status="completed",
+            result=result,
+            execution_summary={"served_by": {"provider": "lmstudio"}},
+        )
+    )
+
+    assert execution.audit["total_cost_usd"] == pytest.approx(0.25)
