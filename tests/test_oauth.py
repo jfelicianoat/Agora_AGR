@@ -66,7 +66,7 @@ def _oauth(tmp_path: Path) -> OAuthFixture:
         generate_private_key(),
         token_ttl_seconds=60,
         clock=lambda: now[0],
-        identifier=iter((f"access-{index}" for index in range(100))).__next__,
+        identifier=iter(f"access-{index}" for index in range(100)).__next__,
     )
     return OAuthFixture(authority, registry, keys, now)
 

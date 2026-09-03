@@ -61,7 +61,7 @@ def build_broker_request(
                 "determinism": policy.determinism,
             },
         },
-        "output": {"format": policy.output_format, "language": policy.output_language},
+        "output": _output_section(policy),
         "generation": generation,
         "model_requirements": model_requirements,
         "execution": {
@@ -75,3 +75,14 @@ def build_broker_request(
         "prompt_compression": "off",
         "exclude_from_model_learning": False,
     }
+
+
+def _output_section(policy: BrokerPolicy) -> dict[str, Any]:
+    """El broker exige json_schema cuando el formato es json; sin él responde 422."""
+    section: dict[str, Any] = {
+        "format": policy.output_format,
+        "language": policy.output_language,
+    }
+    if policy.output_schema is not None:
+        section["json_schema"] = policy.output_schema
+    return section

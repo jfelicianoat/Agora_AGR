@@ -55,6 +55,9 @@ class BrokerPolicy:
     max_cost_usd: float | None = None
     output_format: Literal["markdown", "text", "json"] = "markdown"
     output_language: str = "es"
+    # AI_Broker rechaza con 422 CONTRACT_VALIDATION_FAILED un output.format json
+    # sin esquema (app/schemas.py: TaskOutput.require_schema_for_json).
+    output_schema: dict[str, Any] | None = None
     seed: int = 0
 
     def __post_init__(self) -> None:
@@ -62,6 +65,10 @@ class BrokerPolicy:
             raise ValueError("broker timeout must be positive")
         if self.zombie_timeout_seconds <= self.timeout_seconds:
             raise ValueError("Agora zombie timeout must exceed broker task timeout")
+        if self.output_format == "json" and not self.output_schema:
+            raise ValueError("json output requires an explicit output_schema")
+        if self.output_format != "json" and self.output_schema is not None:
+            raise ValueError("output_schema only applies to json output")
         if self.determinism == "strict" and self.target_model is None:
             raise ValueError("strict policy requires an exact target_model")
         if self.determinism == "routed" and self.target_model is not None:

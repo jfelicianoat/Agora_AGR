@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import json
 import inspect
+import json
 import sys
 import time
 from pathlib import Path
@@ -10,15 +10,15 @@ import httpx
 import pytest
 
 from agora.board import Board
+from agora.broker import runner as broker_runner_module
 from agora.broker.client import BrokerApiError, BrokerClient
 from agora.broker.contracts import BrokerPolicy
 from agora.broker.executor import BrokerExecutor, broker_idempotency_key
 from agora.broker.request_builder import build_broker_request
 from agora.broker.supervisor import BrokerSupervisor
-from agora.broker import runner as broker_runner_module
-from agora.remote import client as remote_client_module
 from agora.cards import Card
 from agora.profiles import Profile
+from agora.remote import client as remote_client_module
 from agora.skills import load_profile_skills
 from conftest import create_card, write_profile
 
@@ -89,8 +89,16 @@ class FakeBroker:
             return httpx.Response(202, json={"task_id": self.task_id, "status": "queued"})
         if path == f"/api/v1/tasks/{self.task_id}" and request.method == "GET":
             status = self._next(self.task_statuses)
+            # Claves reales del contrato 2.9 (app/coordinator.py del broker).
             result = (
-                {"content": "Broker completed the Atomic CARD."} if status == "completed" else None
+                {
+                    "result_markdown": "Broker completed the Atomic CARD.",
+                    "assistant_content": "Broker completed the Atomic CARD.",
+                    "inference_kind": "chat",
+                    "output_format": "markdown",
+                }
+                if status == "completed"
+                else None
             )
             return httpx.Response(
                 200,

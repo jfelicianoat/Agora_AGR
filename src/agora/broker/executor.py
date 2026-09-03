@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -98,6 +97,7 @@ class BrokerExecutor:
         if state.status != "completed":
             raise BrokerTaskFailed(state)
         invocations = self.client.invocations(state.task_id)
+        billable = _contract_invocations(invocations)
         if self.policy.determinism == "strict":
             _validate_strict(state, invocations, self.policy)
         audit = _audit(state, invocations, self.policy)
@@ -107,7 +107,7 @@ class BrokerExecutor:
         milestones = (
             f"AI_Broker task completed: {state.task_id}.",
             f"Effective model: {model or 'not reported'}.",
-            f"Broker invocations: {len(invocations)}; cost USD: {audit['total_cost_usd']:.8f}.",
+            f"Broker invocations: {len(billable)}; cost USD: {audit['total_cost_usd']:.8f}.",
             f"Determinism policy: {self.policy.determinism}; prompt compression: off.",
         )
         return BrokerExecution(
@@ -136,14 +136,36 @@ def broker_idempotency_key(work: WorkItem) -> str:
     return "agora:" + hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
+# AI_Broker 2.9 materializa el entregable bajo estas claves: app/coordinator.py
+# escribe `result_markdown` y `assistant_content` en todas las estrategias. El resto
+# se tolera sólo por compatibilidad futura; ninguna es la que el broker emite hoy.
+# `shadow_probe` es exploración de enrutado del broker (app/shadow_probe.py): comparte
+# task_id con la CARD pero no la ejecuta, puede usar otro modelo y llega a `completed`.
+# Ni valida la política estricta ni se factura a la tarjeta.
+NON_CONTRACT_ROLES = frozenset({"shadow_probe"})
+
+
+def _contract_invocations(
+    invocations: tuple[BrokerInvocation, ...],
+) -> tuple[BrokerInvocation, ...]:
+    return tuple(item for item in invocations if item.role not in NON_CONTRACT_ROLES)
+
+
+_RESULT_KEYS = ("result_markdown", "assistant_content", "content", "text", "output", "answer")
+
+
 def _result_bytes(result: dict[str, Any] | None) -> bytes:
     if not result:
         raise BrokerApiError(500, "completed task has no result")
-    for key in ("content", "text", "output", "answer"):
+    for key in _RESULT_KEYS:
         value = result.get(key)
         if isinstance(value, str) and value:
             return value.encode("utf-8")
-    return (json.dumps(result, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+    # Fallar de forma visible: cerrar la CARD con un volcado JSON del sobre del
+    # broker disfrazaría de entregable algo que no lo es.
+    raise BrokerApiError(
+        500, "completed task has no textual deliverable in " + ", ".join(_RESULT_KEYS)
+    )
 
 
 def _audit(
@@ -161,7 +183,10 @@ def _audit(
         "requested_model": summary.get("requested_model"),
         "models_used": summary.get("models_used", []),
         "fallback_used": summary.get("fallback_used"),
-        "total_cost_usd": sum(item.cost_usd for item in invocations),
+        "total_cost_usd": sum(item.cost_usd for item in _contract_invocations(invocations)),
+        "exploratory_cost_usd": sum(
+            item.cost_usd for item in invocations if item.role in NON_CONTRACT_ROLES
+        ),
         "invocations": [item.model_dump(mode="json") for item in invocations],
     }
 
@@ -184,7 +209,9 @@ def _validate_strict(
     identity = ("provider", "deployment", "model")
     if not isinstance(served, dict) or any(served.get(key) != target.get(key) for key in identity):
         raise BrokerPolicyViolation("strict policy target_model was not the model served")
-    successful = [item for item in invocations if item.status == "completed"]
+    successful = [
+        item for item in _contract_invocations(invocations) if item.status == "completed"
+    ]
     if not successful:
         raise BrokerPolicyViolation("strict policy has no successful invocation telemetry")
     for item in successful:

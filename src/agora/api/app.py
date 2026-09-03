@@ -351,7 +351,25 @@ def _mutation(
         if cached:
             return _replay(cached.status_code, cached.payload)
         path = operation()
-        payload = {"filename": path.name, "state": destination.value, "replayed": False}
+        payload = {
+            "filename": path.name,
+            "state": _reached_state(path, destination),
+            "replayed": False,
+        }
         idempotency.save(scope, key, digest, status_code=200, payload=payload)
         events.emit(event_kind, {"filename": path.name})
         return JSONResponse(status_code=200, content=payload)
+
+
+def _reached_state(path: Path, expected: BoardState) -> str:
+    """El estado real donde quedó la CARD.
+
+    Una transición puede acabar en otro sitio del previsto: agotar `max_attempts`
+    al ceder una tarjeta la manda a `blocked`, no a `pending`. Devolver el destino
+    esperado haría que el runner (y el registro de idempotencia) guardaran una
+    mentira sobre el tablero.
+    """
+    reached = path.parent.name
+    if reached in {state.value for state in BoardState}:
+        return reached
+    return expected.value

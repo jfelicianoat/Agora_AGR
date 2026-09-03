@@ -3,7 +3,6 @@ from __future__ import annotations
 import inspect
 from pathlib import Path
 
-import httpx
 from fastapi.testclient import TestClient
 
 from agora.broker.client import BrokerApiError, BrokerClient

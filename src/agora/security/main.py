@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import os
+from contextlib import suppress
 from pathlib import Path
 
 from agora.documents import atomic_write_text
@@ -64,10 +65,10 @@ def main(argv: list[str] | None = None) -> int:
 def _write_secret(path: Path, content: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(content)
-    try:
+    # En Windows chmod no restringe realmente el fichero; el permiso es
+    # el que se puede aplicar, no una garantía del contrato.
+    with suppress(OSError):
         os.chmod(path, 0o600)
-    except OSError:
-        pass
 
 
 if __name__ == "__main__":
