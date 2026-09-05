@@ -84,6 +84,26 @@ if (-not (Test-Path $venvPython)) {
 }
 Write-Ok (& $venvPython --version)
 
+# Reinstalar con la ventana abierta deja directorios sombra ~ en site-packages:
+# Windows no deja reemplazar las DLL de PySide6 mientras un proceso las tiene
+# cargadas, y pip se rinde dejando basura a medio borrar.
+$corriendo = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+    Where-Object { $_.CommandLine -like '*agora.desktop.main*' -or $_.CommandLine -like '*agora.api.main*' })
+if ($corriendo) {
+    Write-Step 'Cerrando Agora antes de reinstalar'
+    foreach ($proceso in $corriendo) {
+        Write-Ok "cerrando PID $($proceso.ProcessId)"
+        Stop-Process -Id $proceso.ProcessId -Force -ErrorAction SilentlyContinue
+    }
+    Start-Sleep -Seconds 3
+}
+
+# Restos de una reinstalacion anterior que pip no pudo borrar.
+foreach ($base in @((Join-Path $venv 'Lib\site-packages'), (Join-Path $venv 'Lib\site-packages\PySide6\plugins'))) {
+    Get-ChildItem $base -Filter '~*' -Directory -ErrorAction SilentlyContinue |
+        ForEach-Object { Remove-Item -Recurse -Force $_.FullName -ErrorAction SilentlyContinue }
+}
+
 Write-Step 'Instalando Agora (api, oauth, escritorio)'
 Invoke-Native -Exe $venvPython -Arguments @('-m', 'pip', 'install', '--upgrade', '--quiet', 'pip')
 Invoke-Native -Exe $venvPython -Arguments @('-m', 'pip', 'install', '--quiet', '--force-reinstall', "$Wheel[api,oauth,desktop]") `
@@ -154,11 +174,34 @@ if (-not (Test-Path '$certificate')) {
     Write-Host 'Crealo con: agora-certs init-ca  y  agora-certs issue'
     Read-Host 'Pulsa Intro para cerrar'; exit 1
 }
+# Si ya hay un tablero escuchando, decirlo y no dejar que uvicorn falle con un
+# error de socket que nadie llega a leer.
+`$ocupado = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
+if (`$ocupado) {
+    `$duenyo = (Get-Process -Id `$ocupado[0].OwningProcess -ErrorAction SilentlyContinue).ProcessName
+    Write-Host "El puerto $Port ya esta ocupado por '`$duenyo' (PID `$(`$ocupado[0].OwningProcess))." -ForegroundColor Yellow
+    Write-Host 'Probablemente el tablero ya esta arrancado: no hace falta abrirlo otra vez.'
+    Read-Host 'Pulsa Intro para cerrar'; exit 0
+}
+
 `$env:AGORA_API_TOKEN = `$token.Trim()
-Write-Host "Agora $installed - tablero en https://`$env:COMPUTERNAME`:$Port" -ForegroundColor Cyan
-Write-Host 'Ctrl-C para pararlo.'
+Write-Host "Agora $installed - tablero en https://`$(`$env:COMPUTERNAME):$Port" -ForegroundColor Cyan
+Write-Host 'Ctrl-C para pararlo. Esta ventana debe quedarse abierta mientras trabaje el PC IA.'
+Write-Host ''
+
+# El servidor se invoca sin ErrorActionPreference = Stop para poder juzgarlo por
+# su codigo de salida. Si cae, la ventana NO se cierra: sin esto el error se va
+# con ella y no hay forma de saber que paso.
+`$ErrorActionPreference = 'Continue'
 & '$venvPython' -m agora.api.main '$Workspace' --host $ListenHost --port $Port ``
     --cert '$certificate' --key '$key' @args
+`$codigo = `$LASTEXITCODE
+if (`$codigo -ne 0) {
+    Write-Host ''
+    Write-Host "El tablero termino con codigo `$codigo. El error esta encima de esta linea." -ForegroundColor Red
+    Read-Host 'Pulsa Intro para cerrar'
+}
+exit `$codigo
 "@ | Set-Content -Path $boardScript -Encoding UTF8
 Write-Ok $boardScript
 
