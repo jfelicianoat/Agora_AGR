@@ -7,6 +7,36 @@ claim them atomically, produce explicit artifacts, and leave a human-readable re
 The project is implemented in gated phases. The F0 core is deliberately offline and has
 no Qt dependency. F1 adds an optional Windows desktop client on top of the same services.
 
+## Instalar y arrancar (usuario, no desarrollo)
+
+Las dos mitades de Agora se instalan por separado, porque viven en máquinas
+distintas: el **tablero** en el PC de trabajo y el **AI Runner** junto al
+AI_Broker.
+
+```powershell
+# 1. Construir el paquete
+.\scriptsuild-runner-package.ps1        # -> distgora-runner-<version>.zip
+
+# 2. En el PC del tablero
+.\scripts\install-board.ps1               # -> C:\Agora + accesos directos
+```
+
+`install-board.ps1` crea un venv aislado, inicializa el KANBAN, genera el token
+del tablero en el Administrador de credenciales y deja dos lanzadores con
+acceso directo en el Escritorio:
+
+| Lanzador | Qué arranca |
+|---|---|
+| **Agora Desktop** | La ventana. Es la aplicación |
+| **Agora Tablero** | La API HTTPS que sirve tarjetas al runner del PC IA |
+
+La ventana se puede abrir sin el tablero: lee el KANBAN del disco. El tablero
+sólo hace falta cuando el PC IA tiene que trabajar, y necesita certificado
+(`agora-certs`) y una regla de cortafuegos para el puerto 8741.
+
+Para el PC IA, copia `distgora-runner-<version>.zip` y sigue
+`docs/INSTALAR_RUNNER.md`.
+
 ## F0 development
 
 ```powershell
