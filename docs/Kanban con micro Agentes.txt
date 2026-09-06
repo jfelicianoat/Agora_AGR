@@ -1,0 +1,174 @@
+0:000 segundosEn este vídeo te voy a enseñar un cambio de paradigma que podemos aplicar a nuestros agentes de inteligencia artificial y que yo no he visto por ahí.
+0:099 segundosLlevo meses precisamente haciendo pruebas con este paradigma y que tiene mucho que ver con esta imagen que estás viendo, este tablero canvan. La mayoría
+0:1717 segundosde la gente que ves por ahí te enseña que un tablero canvan es esto, un tablerito con cuatro columnas donde tú puedes arrastrar tarjetas de un sitio a
+0:2525 segundosotro. Te han vendido esta vista donde puedes poner distintas tarjetas, que cada tarjeta tiene un estado correspondiente a su columna, como si
+0:3333 segundosesto fuera el sistema, pero realmente esto que estás viendo es el envoltorio, la forma, la vista. Toyota, la empresa
+0:4141 segundos[carraspeo] Toyota, uno de los propulsores de este tipo de tableros, no lo hizo para que los trabajadores tuvieran un tablero más bonito con distintas columnas. lo inventó para
+0:4949 segundoscambiar una sola cosa, es cómo fluye el trabajo y que en vez de empujar trabajo
+0:5858 segundosa las líneas de producción, los propios trabajadores en función de la demanda tirasen de la producción, que es algo
+1:041 minuto y 4 segundosmuy distinto. Y ese cambio de empujar por tirar fue lo que propulso este tipo de tableros Canvan, no al revés. No os
+1:131 minuto y 13 segundosquedéis con la forma de estos tableritos Canvan, porque el concepto que hay detrás es mucho más profundo y es lo que vamos a ver en este vídeo. Y esto tiene
+1:211 minuto y 21 segundosuna consecuencia brutal para los agentes de inteligencia artificial que llamaremos [carraspeo] agentes atómicos y que vamos a ver en
+1:291 minuto y 29 segundoseste vídeo. Vamos a ver cómo adaptar el sistema de Toyota en los agentes de inteligencia artificial. Os voy a explicar cómo el sistema Canvan va a
+1:381 minuto y 38 segundoscambiar la forma en la que trabajáis con vuestros agentes de inteligencia artificial. Hasta ahora, tanto en cualquier línea de producción, en
+1:461 minuto y 46 segundosfábricas, había un problema que también habréis notado con vuestros agentes de inteligencia artificial. Es que nosotros
+1:531 minuto y 53 segundoscuando estamos de manager mandando tareas a nuestros agentes de inteligencia artificial, pero lo mismo ocurre en una fábrica con el director o
+2:022 minutos y 2 segundosel manager, es muy difícil de que equilibremos los trabajos de forma organizada. Es muy probable que a un agente, a un trabajador lo inundemos de
+2:102 minutos y 10 segundostrabajo, otro esté ocioso o otro tenga poco trabajo. Entonces, ¿cómo solucionar esto? De esta forma, producir solo lo
+2:192 minutos y 19 segundosnecesario cuando sea necesario. Y para esto se crearon las tarjetas Canvan, que son las tarjetitas que movemos entre las distintas columnas de los tableros Can.
+2:292 minutos y 29 segundosY esas tarjetitas tienen una función más allá de que queden bonitas en los tableros. es que nosotros es mostrar el
+2:372 minutos y 37 segundosestado de la línea de producción y responder a una necesidad real.
+2:412 minutos y 41 segundosGeneralmente nosotros como nuestros agentes de inteligencia artificial lo que hacemos es que empujamos trabajo, le empezamos a mandar cosas a esa gente que
+2:482 minutos y 48 segundosestá 24x7 corriendo y ese es el problema. En una gente que está corriendo 24x7 continuamente nosotros le estamos mandando contexto de esa tarea
+2:572 minutos y 57 segundospuntual que tiene que realizar. Y llega un momento que se están apilando distintos niveles de contexto de cada una de las tareas que estamos organizando y estamos contaminando esa
+3:053 minutos y 5 segundosventana de contexto. Incluso aunque estemos creando subagentes de esta gente continuo corriendo 24x7 lance subagentes
+3:123 minutos y 12 segundospara ejecutar esas esos tareas, esos trabajos puntuales, esos subagentes también consumen recursos del agente
+3:193 minutos y 19 segundos24x7 y además son hijos de este agente continuo, por tanto dependen de él. Si esta gente continuo se cae o tuviera
+3:273 minutos y 27 segundoscualquier problema, no podría realizar las tareas.
+3:303 minutos y 30 segundosEsto es empujar el trabajo. Esto es que nosotros el trabajo, las tareas las empujamos a la línea de producción, las empujamos a la gente. Y la idea ahora es
+3:393 minutos y 39 segundosque nuestros agentes, igual que los trabajadores en las fábricas de automoción, en el caso de Toyota, es que tiren a medida que van liberando ese
+3:463 minutos y 46 segundostrabajo, van tirando de las tarjetas donde cada tarjeta de estas va a representar una tarea y estas tarjetas se van a representar en Talberos Camban.
+3:573 minutos y 57 segundosEntonces, los distintos agentes, al igual que los trabajadores de la fábrica, no necesitan recibir órdenes individuales, sino que tienen que ser
+4:054 minutos y 5 segundosresponsables de que cuando hay una tarea pendiente y ellos pueden realizar esa tarea, se la autoasignan sin que nadie se lo tenga que mandar, de tal forma que
+4:144 minutos y 14 segundoscon trabajadores y agentes independientes puedan ir vaciando todas las tareas que haya en la columna de pendiente del
+4:224 minutos y 22 segundostablero Canan. De esta forma estamos tirando de la línea de producción, no empujando trabajo. Estamos tirando de las posibles tareas que haya y no
+4:304 minutos y 30 segundosnosotros empujándoselas todas de golpe a un agente. Entonces, lo que hacemos es cambiamos personas, agentes. En vez de ser una persona la que está tirando del
+4:384 minutos y 38 segundostablero canvan, vamos a tener a un agente. Pero aparece un problema. ¿Qué agente toma esta tarjeta? Pues para eso
+4:454 minutos y 45 segundosdiseñaremos esto. Va a haber una tarjeta con la tarea que hay que realizar y explicando qué es lo que tiene que hacer de forma aséptica y ajena. y tendremos
+4:544 minutos y 54 segundosun perfil, no un agente. El agente es cuando el perfil se instancia, se ejecuta y empieza a correr. El perfil
+5:025 minutos y 2 segundosúnicamente es un fichero de texto plano estático pasivo. Pero en este perfil le vamos a explicar qué sabe hacer este
+5:115 minutos y 11 segundosperfil, teniendo en cuenta las habilidades, las skill comunes que tenemos también en ficheritos junto a nuestros agentes. en nuestras carpetas.
+5:215 minutos y 21 segundosNosotros en nuestras carpetas tendremos distintas skills o ficheros de texto plano y entonces este perfil le vamos a
+5:285 minutos y 28 segundosindicar qué skills tiene de tal forma que cada uno de los perfiles sabrá qué tareas puede realizar de tal forma que
+5:365 minutos y 36 segundoslas tareas, las tarjetas no necesitan saber qué agentes atómicos las van a ejecutar. Y ahora vamos a ver cómo casaremos el perfil con las tarjetas.
+5:475 minutos y 47 segundosaparece la figura de el lanzador. El lanzador hace match casa, las distintas tareas que nosotros vamos a dejar en los tableros canes.
+5:585 minutos y 58 segundosEntonces, aquí habrá un perfil que en función de estas tareas va a decir, "Vale, yo sé hacer esta tarea que hay aquí, por tanto, asínamela." Entonces el
+6:076 minutos y 7 segundoslanzador va a ver estas tareas y, por ejemplo, va a esta y va a decir, "Vale, esta tarea casa con este perfil."
+6:146 minutos y 14 segundosEntonces, a este perfil lo va a levantar el lanzador y entonces al levantar este perfil, este perfil se convierte en una
+6:216 minutos y 21 segundosagente atómico y este agente atómico realizará esta tarea y se volverá a morir. O sea, cada uno de estos agentes,
+6:296 minutos y 29 segundoso sea, cada uno de estos perfiles nacen, se convierten en agentes atómicos durante el tiempo que necesiten realizar
+6:366 minutos y 36 segundosesa tarea y mueren. Por eso se llaman agentes atómicos, porque son bloques indivisibles que únicamente están
+6:456 minutos y 45 segundosdestinados a realizar tareas muy concretas, lo que ocurre que luego puede haber distintos agentes por encima que
+6:526 minutos y 52 segundossean capaces de coordenar otros perfiles para orquestar flujos de trabajo. Pero eso ya es otro tema. Ahora nos centramos
+6:596 minutos y 59 segundosen esto, e que el lanzador realmente no hace el trabajo, sino que solo encuentra quién puede tirar de la tarjeta. O sea,
+7:077 minutos y 7 segundosel lanzador va al tablero Canvan y va asociando las tareas que haya en ese en esa columna dependiente con los distintos perfiles que tendrá, de tal
+7:157 minutos y 15 segundosforma que la gente no recibe órdenes. Lo que hace es que reclama el trabajo de forma autónoma cuando está libre y capacitado. Cuando hay una tarjeta
+7:237 minutos y 23 segundosdisponible, el lanzador se la asigna a un perfil. El perfil levanta y además se
+7:307 minutos y 30 segundoslevanta con un arnés distinto en función de la complejidad de la tarea. Y aquí me refiero que si la tarea es sencilla, igual se levanta con un modelo de
+7:397 minutos y 39 segundosinteligencia artificial básico de toques muy baratos, por ejemplo, un Haiku. Y si la tarea es muy compleja, pues igual se levanta con un Opus 5 o con un GPT 5.6.
+7:507 minutos y 50 segundosEntonces, cada agente atómico se va a ejecutar con un distinto tipo de modelo de inteligencia artificial, de tal forma que estamos macheando muy bien la
+7:587 minutos y 58 segundoscomplejidad de la tarea que tiene que realizar con el arnés, con el tokens, con los tokens que va a consumir para no
+8:058 minutos y 5 segundosgastar tokens de un modelo caro para tareas sencillas, sino que de esta forma casamos los distintos modelos de
+8:138 minutos y 13 segundosinteligencia artificial para cada una de las tareas en función de su complejidad.
+8:178 minutos y 17 segundosEntonces, ¿qué es un agente atómico? Un agente atómico nace cuando el lanzador le asigna un perfil, ejecuta la tarea,
+8:258 minutos y 25 segundosque para esta tarea es un especialista exclusivo para resolver ese encargo.
+8:298 minutos y 29 segundosRealiza la entrega. Esta entrega la realiza en el cerebro digital y como ese cerebro digital ese estándar, este
+8:378 minutos y 37 segundosagente, o bien las salidas se la seará inferido en la propia tarea o bien la propia tarea le dirá, "Oye, deja esa
+8:448 minutos y 44 segundossalida o coge la entrada en función de tu cerebro digital y como el cerebro digital es estándar, ya sabes dónde tiene que dejar esa tarea o ya sabe
+8:528 minutos y 52 segundosdónde tiene que recibir las entradas para realizar esa tarea y finalmente muere, desaparece." Entonces, los agentes atómicos nacen,
+9:009 minutoscrecen o se ejecutan, no se reproducen [carraspeo] y mueren. Y además cada agente puede ejecutar distintos tipos de
+9:099 minutos y 9 segundosskills. Una cosa es el perfil y otra cosa son los skills. Entonces, todos los skills que hay en el catálogo, cada
+9:189 minutos y 18 segundosperfil puede asociarse varios skills, de tal forma que cada perfil va cogiendo los skills que necesita, de tal forma que los skills también son atómicos.
+9:289 minutos y 28 segundosigual que los perfiles. Entonces, todo se machache en tiempo real porque las skills son capacidades reutilizables.
+9:359 minutos y 35 segundosEntonces, cada perfil va cogiendo las skills que necesita. Las skills no están atadas a los agentes. Imaginad que yo
+9:439 minutos y 43 segundosmando una tarea y le digo, "Oye, quiero eh transcribir este vídeo de YouTube." Entonces, se crea una tarea en el tablero Canban. Entonces, el lanzador le
+9:529 minutos y 52 segundosasigna esta tarea a un perfil. Ese perfil levanta un agente que es el agente transcriptor. El agente
+9:599 minutos y 59 segundostranscriptor realiza el trabajo de convertir este vídeo en un texto bruto.
+10:0310 minutos y 3 segundosY entonces, ¿cuál termina? Dice, "Yo ya he terminado mi tarea. Incluso podría generar otra tarea que fuese, oye,
+10:1110 minutos y 11 segundosrealizan un resumen y la deja en el tabelo canal. A esta agente transcriptor le da igual quién va a realizar el resumen. Él lo único que hace es que
+10:1810 minutos y 18 segundosdeja una tarea en el tabelo canvan y este perfil de agente resumidor instancia levanta un agente resumidor y tomará esta tarea. Y el lanzador de
+10:2710 minutos y 27 segundosnuevo ve una tarea que pone resumir un texto. Entonces el perfil busca un perfil que sea resumidor. Ese perfil
+10:3610 minutos y 36 segundosinstancia un agente resumidor y realiza esta tarea. Y esta tarea la dejará en una salida concreta donde dejará el
+10:4210 minutos y 42 segundosartículo correspondiente a este texto bruto que era la transcripción de este vídeo, de tal forma que las tareas
+10:5010 minutos y 50 segundosfluyen de forma independiente y cada una espera su turno. ¿No os habrá pasado a vosotros que cuando tenéis un agente continuo, hayan pasado continuamente? Tú
+10:5910 minutos y 59 segundosempiezas a mandar tareas y llega un momento en que entras se solapan, se quedan unas colgadas, otras se quedan en espera, nunca se llegan a realizar y
+11:0711 minutos y 7 segundosllega un momento que hay tantas skills que hasta la gente continuo no sabe qué skill arrancar. Pues esto es lo que ya vamos a ir a solucionar con los agentes
+11:1411 minutos y 14 segundosatómicos. Y hay una cosa todavía más interesante que podemos conseguir. Como estamos reflejando todos los estados en
+11:2111 minutos y 21 segundosficheros de texto plano que son tarjetas. Cada una de esas tareas es un fichero de texto plano que representa una tarea con un estado concreto de
+11:3011 minutos y 30 segundospendiente en progreso hecha o programado se van dejando en columnas, pero que estas columnas como son todos ficheros
+11:3811 minutos y 38 segundosde texto plano con distintos tipos de estado, se pueden sincronizar entre distintos Mac Mini, entre distintas VPS,
+11:4511 minutos y 45 segundosentre distintas máquinas, de tal forma que cada una de las máquinas puede ir cogiendo tareas y realizarlas y volver a dejar nuevas tareas.
+11:5411 minutos y 54 segundospara igual otros Mac Mini, de tal forma que nosotros podemos de esta forma escalar de forma horizontal, ya no solo
+12:0212 minutos y 2 segundosde forma vertical aumentando potencia a la máquina, sino de forma horizontal.
+12:0712 minutos y 7 segundosEntonces, el caso en que el día de mañana nosotros a nuestros agentes de inteligencia artificial vayan ya escasos con el número de tareas que le estamos
+12:1412 minutos y 14 segundosenviando, podemos delegar en distintos Mac Mini. Incluso podríamos escalar un Mac Mini para temas de seguridad, otro
+12:2112 minutos y 21 segundosMac Mini para temas de vídeo con más capacidad operativa, con más recursos, con más RAM. Pensad, sois conscientes de
+12:2812 minutos y 28 segundosel cambio de paradigma que supone esto y de cómo ya nos va a permitir escalar un sistema de inteligencia artificial. Ya os digo que yo llevo varios meses
+12:3712 minutos y 37 segundosprobando todo esto, o sea, esto yo no lo he visto antes y funciona muy muy bien.
+12:4312 minutos y 43 segundosMucho mejor que un agente continuo fluyendo 24x7. Esto no significa que un agente continuo vaya a desaparecer. Al revés, vamos a combinar agentes
+12:5112 minutos y 51 segundoscontinuos con agentes atómicos. ¿Por qué va a venir bien un agente continuo? Para que tener siempre un agente que tenga
+12:5912 minutos y 59 segundoscontexto 24 horas por 7 días a la semana. Pero esto serán para otro tipo de tareas. Pero la mayoría tareas que
+13:0613 minutos y 6 segundosrealizamos son atómicas. Y me dirías, "No, pero hay tareas que son muy largas." No son distintos átomos, tareas atómicas que son secuenciales.
+13:1513 minutos y 15 segundosTú ese proyecto estoy seguro que lo puedes dividir en distintas tareas atómicas que luego se pueden secuenciar.
+13:2213 minutos y 22 segundosY cada una de esas tareas atómicas, no te preocupes, que cada unos perfiles ya sabrá cómo crear la siguiente tarea para otro perfil haga exactamente ese
+13:3013 minutos y 30 segundostrabajo. Entonces, lo que hemos hecho es adaptar el cambio de paradigma que supuso para Toyota cambiar el empujar por el tirar en las líneas de
+13:3813 minutos y 38 segundosproducción. Entonces, lo llevamos de la fábrica al código. Es lo que hacía el fábrica Toyota, pasarlo al flujo de trabajo de Nexus. Es cambiar
+13:4613 minutos y 46 segundostrabajadores por agentes atómicos y es cambiar tarjetas Campan por encargos del sistema, que van a ser ficheros de texto plano que podemos sincronizar entre
+13:5513 minutos y 55 segundosmáquinas. Pues de cada fichero de texto plano vas a poner una tarea, una tarea que representaremos en ese tablero canvan. Pues este sistema tiene muchas
+14:0214 minutos y 2 segundosventajas. Vamos a verla desde el punto de vista de tareas. Primero, lo que os he comentado antes, la potencia la podemos repartir entre distintas
+14:1114 minutos y 11 segundosmáquinas, o sea, podemos tener un Mac Mini, un VPS. Lo lo idea es que todos comparten el mismo tabelo canban.
+14:1714 minutos y 17 segundosEntonces, cada perfil que esté en cada una de las máquinas, podíamos tener un montón de máquinas apiladas, podría la tarea que la aplicase. O sea,
+14:2414 minutos y 24 segundospodríamos tener un VPS para tareas sencillas de clasificación y otro en el Mac Mini con mucha potencia y mucha RAM
+14:3314 minutos y 33 segundoscon una IA local centrada para determinadas tareas, por ejemplo, de vídeo o de temas audiovisuales que requieren mucha infraestructura, muchos
+14:4014 minutos y 40 segundosrecursos de CPU y de RAM. De esta forma escalamos toda la potencia que requiere los agentes de inteligencia artificial entre
+14:4714 minutos y 47 segundosdistintas máquinas gracias a los tableros canan y tener todo perfectamente en tarjetas desacopladas del sistema. El trabajo pesado lo
+14:5614 minutos y 56 segundosrealizan obreros efímeros donde el contexto nace y muere. Son, recordad que también es multimodal. Esto es
+15:0315 minutos y 3 segundosimportantísimo. Los agentes no conocen el modelo, no conocen la máquina. O sea, los agentes están desacoplados de la
+15:1115 minutos y 11 segundosmáquina. Es cuestión todo de mover ficheros entre máquinas. ¿Entendéis la sencillez que hay? Luego, varios obreros
+15:1715 minutos y 17 segundospueden trabajar de forma aislada sin bloquearse tareas. Solamente cuando dejan una tarea, el otro arranca la siguiente si es secuencial. Luego aquí
+15:2615 minutos y 26 segundosen el tablero Canvan nos permite fiabilidad y control de sistemas. Nos ha pasado muchas veces con ese agente continuo que ejecuta, yo que sé, 200
+15:3415 minutos y 34 segundossuagentes. Llega un momento en que no tienes muy claro exactamente qué es lo que ha hecho y te ha llenado todo de ruido. ¿Por qué? porque hay un emparejamiento perfecto de las skills,
+15:4315 minutos y 43 segundosigual ha llamado a skills que no le tocaban, no le aplicaban. Este casamiento ahora lo hacemos mediante los perfiles y si en caso de que un perfil
+15:5115 minutos y 51 segundosno encuentre una skill se queda en silencio o te puede avisar, esto depende de ti. Y luego al ser agentes atómicos
+16:0016 minutosvamos a acercarnos a que sean deterministas. Al haber acotado muy bien la tarea que tienen realizar aquí dentro, intentamos que siempre el
+16:0816 minutos y 8 segundosresultado sea el esperado. Esto inteligencia artificial es muy importante de cara a garantizar resultados y calidad. En caso de caídas
+16:1616 minutos y 16 segundosdel sistema a mitad, por ejemplo, como las tareas son ficheritos de texto, sobreviven a los mismos y los podrán
+16:2516 minutos y 25 segundosvolver a los obreros de nuevo cuando arranquen. En temas de seguridad, las claves solamente se van a despachar cuando arranque el agente atómico. Esto
+16:3416 minutos y 34 segundoses importantísimo. un agente continuo continuamente tiene acceso a las claves, por [resoplido] tanto puede ser pirateado con un maning de middle porque
+16:4216 minutos y 42 segundoscontinuamente las 24 por7 tiene acceso a todas esas claves. El agente atómico solamente es cuando despierta. Cuando el agente atómico despierta, coge la clave,
+16:5116 minutos y 51 segundosejecuta su trabajo y muere. Estamos hablando antes de cuestión de menos de un segundo. Entonces es mucho más difícil de que te roben las claves justo cuando se está ejecutando un agente.
+17:0017 minutosLuego, todos los agentes van a tener en común el mismo cerebro digital, de tal forma que todos los agentes ya pueden saber, aunque no se les infiera las
+17:0817 minutos y 8 segundosentradas y las salidas por las tareas, a tener un estándar de cerebro digital perfectamente indexado, podrían saber dónde está la entrada de lo que tienen
+17:1717 minutos y 17 segundosque y dónde tienen que dejar la salida. Esto ya lo he explicado en vídeos previos. Luego, respecto a los resultados, los agentes atómicos podrán
+17:2517 minutos y 25 segundosregistrar el coste de tokens de cada una de las tareas para tener un seguimiento de cuáles son las tareas que más o menos tokens consumen y poder organizar muy
+17:3517 minutos y 35 segundosbien los modelos que ejecutan cada una de ellas. Igual vemos que con un modelo sencillo o un modelo chino podemos ejecutar una tarea que nos está costando
+17:4217 minutos y 42 segundosmucho con un módulo americano. Esto podemos generar paneles de control y o informes semanales que nos digan
+17:4917 minutos y 49 segundosexactamente en cada cada agente atómico que nos digan cada tarea cuántos costes nos ha costado. Podemos tener mapas de
+17:5717 minutos y 57 segundoscalor con todo el gasto de tokens de cada uno de ellos. Esto a mí me parece de lo más importante es que cada tarea
+18:0418 minutos y 4 segundosle podemos asignar un modelo. Por ejemplo, yo puedo asignar modelos chinos mediante open router a determinadas tareas y solamente aquellas tareas que
+18:1218 minutos y 12 segundossean de alto valor puedo asignar un modelo Opus 5 o un Fable, porque me interesa que aquí ya meta toda la potencia de cálculo, pero solo para
+18:1918 minutos y 19 segundosdeterminadas tareas. Con un agente continuo, continuamente estamos matando moscas a cañonazo. Estamos realizando tareas muy sencillas con modelos muy
+18:2718 minutos y 27 segundospotentes y gastando muchos tokens. Ahora los tokens pueden ser baratos, pero el día de mañana quién sabe. Aquí automatizamos también el trabajo
+18:3418 minutos y 34 segundosrepetitivo. Podemos crear tarjetas de tal forma que únicamente las creamos una vez y pueden ser tareas recurrentes que continuantes se ejecuten el lunes a las
+18:4218 minutos y 42 segundos8. Gracias a las tareas y el tablero Canvan, podemos ver el estado de nuestro de nuestros agentes de inteligencia
+18:5018 minutos y 50 segundosartificial. ¿No os ha pasado tamban bien que muchas veces no sabéis qué os ha hecho una gente? Ha arrancado una terminal infumable, tenéis un montón de
+18:5718 minutos y 57 segundoslogs, pero no os queda muy claro qué es lo que hecho. Tenéis que estar revisando los logs si es que los tenéis y leyendo un montón de líneas. Ahora tenéis todas
+19:0519 minutos y 5 segundoslas tareas en archivo o en hechas, la que las podéis ordenar por fechas, por tipo de modelo usado, por campo de
+19:1219 minutos y 12 segundosbúsqueda. Podéis entender muy bien qué es lo que ha hecho, qué es lo que está pendiente, qué es lo que está en curso.
+19:1719 minutos y 17 segundosY luego, gracias a que el Bol está indexado, todos los agentes intuyen dónde deben dejar las cosas, dónde está la información que necesitan. Por si
+19:2619 minutos y 26 segundosacaso, en la entrada no se lo hubieran especificado, al tener un cervo digital, si les falta algo podrían ir a buscarlo.
+19:3119 minutos y 31 segundosLuego podremos crear una estructura fractal. de que, vale, ahora estamos hablando solamente de los workers, de los obreros, pero el día de mañana podríamos tener directores, podríamos
+19:4019 minutos y 40 segundostener CEO y que a su vez los directores también pudieran generar tarjetas de proyectos en medio de tareas y los CEO
+19:4719 minutos y 47 segundostareas de visión, algo muy distinto, pero esto ya hablaremos en próximos vídeos si os interesa. Luego aquí [resoplido] no se arranca un solo agente
+19:5619 minutos y 56 segundossi no hay una demanda de tareas, de tal forma que no tenemos agentes corriendo 24x7, sino que solamente arrancan y los
+20:0320 minutos y 3 segundosarranca un lanzador que es determinista, los arranca solamente cuando en las tareas, cuando en el tablero canvan, aparece una tarea dependiente. Y luego
+20:1120 minutos y 11 segundoscambiar entre un modelo y otro es tan sencillo como ir a un fichero de texto plano y en los adaptadores cambiar las prioridades de cuándo tiene que levantar
+20:2020 minutos y 20 segundosuno u otro. O sea, si vemos que hay un modelo chino que está de moda y cuesta mucho más barato que el actual, solamente tenemos que ir a una línea de texto y cambiar eso. De todas forma que
+20:2920 minutos y 29 segundostodas las tareas sencillas ahora se realizarán con ese modelo chino. Luego pensad que todo este sistema que hemos visto son ficheritos de texto plano que
+20:3720 minutos y 37 segundosnosotros podemos ver con esos ojitos. Y luego esto a mí me encanta y los que me seguís en el canal he hablado mucho, es
+20:4420 minutos y 44 segundosel kicen. Al atomizar, igual que las notas atómicas y c del casten, al atomizar nos permite observar de manera
+20:5220 minutos y 52 segundosmuy detallada las mejoras atómicas y granulares. Recordad hábitos atómicos de verdad. Pues aquí aplica lo mismo.
+21:0121 minutos y 1 segundoTareas atómicas nos va a permitir analizar muy bien las posibles mejoras en todos nuestros sistemas de agentes o
+21:0821 minutos y 8 segundosen nuestros objetivos o en nuestra visión porque las tenemos en pequeñitas tareas granuladas. Pues estos son los principales, que hay muchos más,
+21:1721 minutos y 17 segundosbeneficios de una arquitectura agéntica basada en tableros canvan y agentes atómicos. Centraros en que esto es un
+21:2421 minutos y 24 segundosnuevo cambio de paradigma. Antes nosotros asignábamos agentes al trabajo, ahora nosotros, olvidaos, publicamos
+21:3321 minutos y 33 segundostrabajo en un tablero canvan y luego hay agentes que van tirando de ese tablero canvan y van cogiéndose las tarjetas,
+21:4021 minutos y 40 segundoslas tareas que son para ellos. Estos puede parecer que es algo similar, pero cambia totalmente la forma en la que trabajan los agentes de inteligencia
+21:4921 minutos y 49 segundosartificial. Es un cambio de paradigma completo y nos va a permitir escalar la inteligencia artificial de una forma que
+21:5621 minutos y 56 segundosantes no hemos visto. Ahora la gente deja de ser el centro del sistema y realmente son las tarjetas, son ese
+22:0422 minutos y 4 segundostablero canvan, el centro de operación donde vamos a observar ahí todo el flujo de trabajo. Bueno, lo que os he dicho, llevo meses trabajando en esto de los
+22:1322 minutos y 13 segundosagentes atómicos. Yo no he visto nada parecido por ahí. He [carraspeo] visto algo que usaba mismo nombre conceptual, pero realmente no es esto de adaptar un
+22:2222 minutos y 22 segundossistema de flujo de producción de fábricas a los agentes atómicos. Si hay por ahí alguien que va a usar lo mismo, espero que al menos cite las fuentes.
+22:3022 minutos y 30 segundosEsto yo no lo he visto por ahí publicado, esta forma de trabajar con agentes atómicos y los resultados son extraordinarios. Por cierto, si os
+22:3822 minutos y 38 segundosinteresa entender y poner a la práctica todo esto de los agentes atómicos, echaré un ojo aquí abajo en la descripción. Cuidaos mucho.
+
