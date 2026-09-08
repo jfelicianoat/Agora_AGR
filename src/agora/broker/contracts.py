@@ -86,6 +86,10 @@ class BrokerPolicy:
     # AI_Broker rechaza con 422 CONTRACT_VALIDATION_FAILED un output.format json
     # sin esquema (app/schemas.py: TaskOutput.require_schema_for_json).
     output_schema: dict[str, Any] | None = None
+    # Cuanto puede escribir el modelo. 4000 era una constante en el constructor
+    # de peticiones y truncaba a media palabra los documentos con contrato: se
+    # midio, 4000 exactos de salida y el JSON cortado dentro de una cadena.
+    max_output_tokens: int = 4000
     seed: int = 0
     # Contrato 2.10, 8.4. `False` pide exclusividad de contenido: sólo el modelo
     # que responde ve el prompt. `None` = decidir por clasificación de datos.
@@ -94,12 +98,19 @@ class BrokerPolicy:
     def __post_init__(self) -> None:
         if self.timeout_seconds < 1:
             raise ValueError("broker timeout must be positive")
+        if self.max_output_tokens < 1:
+            raise ValueError("max_output_tokens must be positive")
         if self.zombie_timeout_seconds <= self.timeout_seconds:
             raise ValueError("Agora zombie timeout must exceed broker task timeout")
         if self.output_format == "json" and not self.output_schema:
             raise ValueError("json output requires an explicit output_schema")
-        if self.output_format != "json" and self.output_schema is not None:
-            raise ValueError("output_schema only applies to json output")
+        # Un esquema sin `format: json` ya no es un error. Desde que las SKILL
+        # declaran contrato de salida, el esquema tiene dos usos mas que no
+        # pasan por el formato del broker: exigirlo al final del prompt y
+        # validar la respuesta antes de escribir el artefacto. De hecho pedir
+        # `format: json` resulto contraproducente —el broker no impone el
+        # esquema y algunos proveedores rechazan la peticion—, asi que este es
+        # ahora el camino normal.
         if self.determinism == "strict" and self.target_model is None:
             raise ValueError("strict policy requires an exact target_model")
         if self.determinism == "routed" and self.target_model is not None:

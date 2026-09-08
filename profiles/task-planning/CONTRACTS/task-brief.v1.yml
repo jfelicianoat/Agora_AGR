@@ -1,0 +1,104 @@
+name: task-brief
+version: 1
+description: Lo que se sabe de un encargo tras la entrevista, con lo que falta por saber.
+schema:
+  type: object
+  additionalProperties: false
+  required:
+  - contract
+  - contract_version
+  - summary
+  - understood
+  - assumptions
+  - questions
+  - confidence
+  properties:
+    contract:
+      const: task-brief
+    contract_version:
+      const: 1
+    summary:
+      type: string
+      minLength: 1
+      description: Una frase que diga que se considera conseguido.
+    understood:
+      type: array
+      description: Hechos que estan en la peticion. Nada mas.
+      items:
+        type: object
+        additionalProperties: false
+        required:
+        - statement
+        - evidence
+        properties:
+          statement:
+            type: string
+            minLength: 1
+          evidence:
+            type: string
+            minLength: 1
+            description: El fragmento de la peticion que lo sostiene.
+    assumptions:
+      type: array
+      description: Lo que hay que dar por cierto para seguir. Vacio si no hay.
+      items:
+        type: object
+        additionalProperties: false
+        required:
+        - statement
+        - impact_if_wrong
+        properties:
+          statement:
+            type: string
+            minLength: 1
+          impact_if_wrong:
+            type: string
+            minLength: 1
+    questions:
+      type: array
+      description: Solo lo material. Vacio si no falta nada por decidir.
+      items:
+        type: object
+        additionalProperties: false
+        required:
+        - question
+        - why_it_matters
+        properties:
+          question:
+            type: string
+            minLength: 1
+          why_it_matters:
+            type: string
+            minLength: 1
+            description: Que cambia en el encargo segun la respuesta.
+          options:
+            type: array
+            items:
+              type: string
+              minLength: 1
+    confidence:
+      type: number
+      minimum: 0
+      maximum: 1
+      description: Cuanto se ha entendido el encargo, de 0 a 1.
+example:
+  contract: task-brief
+  contract_version: 1
+  summary: Dejar el informe mensual listo para enviar al comite.
+  understood:
+  - statement: Hay que preparar el informe mensual
+    evidence: preparar el informe mensual
+  - statement: El destinatario es el comite
+    evidence: para el comite
+  assumptions:
+  - statement: Los datos del mes ya estan disponibles.
+    impact_if_wrong: Habria que recopilarlos antes, y el encargo crece.
+  questions:
+  - question: Cual es la extension esperada?
+    why_it_matters: Cambia cuanto se resume y cuanto se detalla.
+    options:
+    - Una pagina
+    - Cinco paginas
+  - question: Hay que presentarlo en persona?
+    why_it_matters: Si hay que exponerlo, hace falta preparar la exposicion.
+  confidence: 0.6

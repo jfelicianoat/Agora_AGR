@@ -1,0 +1,222 @@
+name: review-analysis
+version: 1
+description: 'Una revision leida: hechos citados, deducciones aparte, trabajo descubierto.'
+schema:
+  type: object
+  additionalProperties: false
+  required:
+  - contract
+  - contract_version
+  - facts
+  - inferences
+  - discovered_work
+  - proposed_dependencies
+  - confidence
+  properties:
+    contract:
+      const: review-analysis
+    contract_version:
+      const: 1
+    facts:
+      type: array
+      description: Lo que el usuario dijo. Nada mas. Cada uno cita sus palabras.
+      items:
+        type: object
+        additionalProperties: false
+        required:
+        - statement
+        - evidence
+        - kind
+        properties:
+          statement:
+            type: string
+            minLength: 1
+          evidence:
+            type: string
+            minLength: 1
+            description: El fragmento literal de la revision que lo sostiene.
+          kind:
+            type: string
+            enum:
+            - completed
+            - partial
+            - not_done
+            - blocked
+            - observation
+            description: Que dijo el usuario. `completed` SOLO si lo dijo el; nunca por deduccion.
+          subject:
+            type: string
+            description: A que se refiere, con las palabras del usuario.
+    inferences:
+      type: array
+      description: Lo que se deduce. Nunca cierra nada por si mismo.
+      items:
+        type: object
+        additionalProperties: false
+        required:
+        - statement
+        - based_on
+        - confidence
+        - requires_confirmation
+        properties:
+          statement:
+            type: string
+            minLength: 1
+          based_on:
+            type: array
+            minItems: 1
+            description: Los hechos que la sostienen, por su posicion en `facts`.
+            items:
+              type: integer
+              minimum: 0
+          contradicted_by:
+            type: array
+            description: Hechos que la debilitan, si los hay.
+            items:
+              type: integer
+              minimum: 0
+          confidence:
+            type: number
+            minimum: 0
+            maximum: 1
+          requires_confirmation:
+            const: true
+            description: Una deduccion siempre necesita que alguien la confirme.
+    discovered_work:
+      type: array
+      description: Trabajo que aparecio y no estaba previsto. Propuestas, no altas.
+      items:
+        type: object
+        additionalProperties: false
+        required:
+        - title
+        - why_it_emerged
+        - evidence
+        - requires_confirmation
+        properties:
+          title:
+            type: string
+            minLength: 1
+          why_it_emerged:
+            type: string
+            minLength: 1
+          evidence:
+            type: string
+            minLength: 1
+          estimated_minutes:
+            type:
+            - integer
+            - 'null'
+            minimum: 1
+            description: Esfuerzo, si se puede estimar. Nunca una fecha.
+          requires_confirmation:
+            const: true
+    proposed_dependencies:
+      type: array
+      description: Dependencias que parecen existir. Se proponen, no se aplican.
+      items:
+        type: object
+        additionalProperties: false
+        required:
+        - blocked
+        - depends_on
+        - why
+        - evidence
+        - requires_confirmation
+        properties:
+          blocked:
+            type: string
+            minLength: 1
+            description: Lo que no puede avanzar.
+          depends_on:
+            type: string
+            minLength: 1
+            description: De que depende.
+          why:
+            type: string
+            minLength: 1
+          evidence:
+            type: string
+            minLength: 1
+          requires_confirmation:
+            const: true
+    causes:
+      type: array
+      description: Por que paso lo que paso, cuando los datos lo permiten.
+      items:
+        type: object
+        additionalProperties: false
+        required:
+        - statement
+        - based_on
+        - confidence
+        properties:
+          statement:
+            type: string
+            minLength: 1
+          based_on:
+            type: array
+            minItems: 1
+            items:
+              type: integer
+              minimum: 0
+          confidence:
+            type: number
+            minimum: 0
+            maximum: 1
+    warnings:
+      type: array
+      description: 'Lo que hay que decirle a quien lea esto: una parte de la peticion que
+        no corresponde a esta capacidad, un dato ambiguo, una revision que apenas dice nada.'
+      items:
+        type: string
+        minLength: 1
+    confidence:
+      type: number
+      minimum: 0
+      maximum: 1
+      description: Cuanto se ha podido interpretar la revision, de 0 a 1.
+example:
+  contract: review-analysis
+  contract_version: 1
+  facts:
+  - statement: No se pudo avanzar con el capitulo 3
+    evidence: no pude tocar el capitulo 3
+    kind: not_done
+    subject: capitulo 3
+  - statement: El indice quedo terminado
+    evidence: el indice ya esta hecho
+    kind: completed
+    subject: indice
+  - statement: Falta que el director devuelva el borrador
+    evidence: sigo esperando al director
+    kind: blocked
+    subject: borrador
+  inferences:
+  - statement: El capitulo 3 no avanza mientras el borrador siga sin revisar.
+    based_on:
+    - 0
+    - 2
+    confidence: 0.6
+    requires_confirmation: true
+  causes:
+  - statement: La espera de una revision externa es lo que frena el capitulo 3.
+    based_on:
+    - 2
+    confidence: 0.5
+  discovered_work:
+  - title: Preparar preguntas concretas para el director
+    why_it_emerged: La espera se repite y no consta que se haya reclamado.
+    evidence: sigo esperando al director
+    estimated_minutes: 20
+    requires_confirmation: true
+  proposed_dependencies:
+  - blocked: capitulo 3
+    depends_on: borrador revisado por el director
+    why: El usuario dice que espera esa revision para poder seguir.
+    evidence: sigo esperando al director
+    requires_confirmation: true
+  warnings:
+  - El usuario pide ademas que se le reorganice la semana; este perfil no agenda. La planificacion
+    del tiempo la hace el planificador del cliente.
+  confidence: 0.7

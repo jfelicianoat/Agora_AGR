@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -21,13 +22,110 @@ from agora.broker.request_builder import build_broker_request
 from agora.cards import Card
 from agora.models import ModelCatalog, profile_capacity
 from agora.profiles import Profile, load_profiles
-from agora.skills import load_profile_skills
+from agora.output_contract import OutputContractError, enforce
+from agora.skills import Skill, load_profile_skills
 
 
 class BrokerTaskFailed(RuntimeError):
     def __init__(self, state: BrokerTaskState) -> None:
         super().__init__(f"AI_Broker task {state.task_id} ended as {state.status}: {state.error}")
         self.state = state
+
+
+# Margen para un documento con contrato. Medido, no elegido: el corte real
+# ocurrio en 4000 con un documento que necesitaba algo mas de la mitad de esto.
+CONTRACT_OUTPUT_TOKENS = 8000
+
+
+def apply_skill_output_contract(
+    policy: BrokerPolicy,
+    skills: tuple[Skill, ...],
+) -> BrokerPolicy:
+    """Impone el contrato de salida que declare una skill.
+
+    Si ninguna lo declara, la politica no cambia: el comportamiento anterior se
+    conserva intacto. Si lo declaran dos, es un error de contrato y no una
+    eleccion silenciosa: no hay forma de saber cual manda.
+    """
+    declaring = [skill for skill in skills if skill.declares_output_contract]
+    if not declaring:
+        return policy
+    first = declaring[0]
+    for other in declaring[1:]:
+        # Varias skills del mismo perfil pueden compartir contrato: una generica
+        # y sus especializaciones producen el mismo documento. Lo que no puede
+        # haber son dos formas distintas, porque no habria manera de saber cual
+        # manda y el consumidor recibiria algo que no espera.
+        if (
+            other.output_contract != first.output_contract
+            or other.output_contract_version != first.output_contract_version
+            or other.output_schema != first.output_schema
+        ):
+            raise ValueError(
+                "skills declare conflicting output contracts: "
+                f"{first.name} promises {first.output_contract}"
+                f"@{first.output_contract_version} and {other.name} promises "
+                f"{other.output_contract}@{other.output_contract_version}"
+            )
+    # Deliberadamente **no** se cambia `output_format`. Se comprobo contra el
+    # broker real (2.10) y salieron dos cosas:
+    #
+    # 1. con `output.format: json` + `json_schema`, el broker **no impone** el
+    #    esquema: devolvio un CSV y, otra vez, un JSON con otra forma;
+    # 2. peor aun, al enrutar a lmstudio el proveedor rechaza la peticion con
+    #    `'response_format.type' must be 'json_schema' or 'text'` y un error
+    #    marcado como **no reintentable**, asi que la tarjeta muere.
+    #
+    # Pedir JSON por ahi no da garantia y si rompe segun a quien enrute. El
+    # esquema se conserva en la politica para dos cosas que si funcionan:
+    # exigirlo al final del prompt y validar la respuesta antes de escribirla.
+    # Y se sube el tope de salida. Un documento con contrato tiene secciones
+    # fijas y es estructuralmente mas largo que la prosa equivalente: con los
+    # 4000 de siempre, un consejo sobre cuatro encargos salio cortado a media
+    # cadena, JSON valido hasta el corte e invalido despues. Se respeta un tope
+    # mayor si ya venia puesto; nadie baja lo que otro subio a proposito.
+    return replace(
+        policy,
+        output_schema=first.output_schema,
+        max_output_tokens=max(policy.max_output_tokens, CONTRACT_OUTPUT_TOKENS),
+    )
+
+
+def _enforce_output_contract(
+    artifacts: dict[str, bytes],
+    deliverable: dict[str, Any],
+    policy: BrokerPolicy,
+) -> dict[str, bytes]:
+    """Comprueba que el entregable cumple el contrato que prometio la skill.
+
+    El broker acepta el `json_schema` pero no lo impone: se verifico contra el
+    broker real y devolvio un bloque Markdown con un JSON que no seguia el
+    esquema. Escribir eso como artefacto dejaria la tarjeta en `done` con algo
+    que el cliente no puede leer, asi que aqui se falla y la tarjeta se
+    reintenta, que es el comportamiento durable de siempre.
+
+    De paso, el artefacto se normaliza a JSON limpio: quien lo consuma no tiene
+    que desenvolver bloques de codigo.
+    """
+    if policy.output_schema is None:
+        return artifacts
+    name = deliverable.get("name")
+    if not isinstance(name, str) or name not in artifacts:
+        return artifacts
+    try:
+        payload = enforce(policy.output_schema, artifacts[name].decode("utf-8"))
+    except UnicodeDecodeError as exc:
+        raise BrokerPolicyViolation(
+            f"el entregable prometia JSON y no es texto legible: {exc}"
+        ) from exc
+    except OutputContractError as exc:
+        raise BrokerPolicyViolation(
+            f"el entregable no cumple el contrato de salida declarado: {exc}"
+        ) from exc
+    normalized = dict(artifacts)
+    normalized[name] = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
+    deliverable["sha256"] = hashlib.sha256(normalized[name]).hexdigest()
+    return normalized
 
 
 class BrokerPolicyViolation(RuntimeError):
@@ -119,6 +217,11 @@ class BrokerExecutor:
         contract.ensure_supports(policy)
         key = broker_idempotency_key(work)
         skills = load_profile_skills(profile.source.parent, profile.skills)
+        # Una skill que promete una forma de salida la impone de verdad: sin
+        # esto el esquema seria solo texto en el prompt y el broker no lo
+        # validaria. Se aplica despues de `ensure_supports` porque no cambia
+        # nada que el contrato del broker tenga que prometer.
+        policy = apply_skill_output_contract(policy, skills)
         payload = build_broker_request(
             profile,
             skills,
@@ -157,6 +260,7 @@ class BrokerExecutor:
             determinism = _validate_strict(state, invocations, effective_policy)
         compression = _validate_prompt_compression(billable, effective)
         artifacts, deliverable = self._collect_artifacts(state, effective, effective_policy)
+        artifacts = _enforce_output_contract(artifacts, deliverable, effective_policy)
         audit = _audit(
             state, invocations, effective_policy, compression, deliverable, determinism
         )

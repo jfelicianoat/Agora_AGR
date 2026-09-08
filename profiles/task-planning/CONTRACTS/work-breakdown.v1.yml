@@ -1,0 +1,121 @@
+name: work-breakdown
+version: 1
+description: Un encargo partido en pasos verificables, con esfuerzo y dependencias.
+schema:
+  type: object
+  additionalProperties: false
+  required:
+  - contract
+  - contract_version
+  - summary
+  - steps
+  - total_estimated_minutes
+  - confidence
+  properties:
+    contract:
+      const: work-breakdown
+    contract_version:
+      const: 1
+    summary:
+      type: string
+      minLength: 1
+      description: Que se considera hecho el encargo entero.
+    kind:
+      type: string
+      description: Tipo de encargo reconocido, si encaja con alguno conocido.
+      enum:
+      - generic
+      - course
+      - study
+      - software
+    steps:
+      type: array
+      minItems: 1
+      items:
+        type: object
+        additionalProperties: false
+        required:
+        - order
+        - title
+        - completion_criteria
+        - estimated_minutes
+        - optional
+        - depends_on
+        properties:
+          order:
+            type: integer
+            minimum: 1
+            description: Posicion en la lista. Las dependencias citan este numero.
+          title:
+            type: string
+            minLength: 1
+            description: Empieza por un verbo y cabe en una linea.
+          description:
+            type: string
+            description: Contexto util, sin repetir el titulo.
+          completion_criteria:
+            type: string
+            minLength: 1
+            description: Observable y comprobable por alguien que no seas tu.
+          estimated_minutes:
+            type:
+            - integer
+            - 'null'
+            minimum: 1
+            description: Esfuerzo, no fecha. null si no hay con que estimar.
+          optional:
+            type: boolean
+            description: Si el encargo sigue hecho sin este paso.
+          depends_on:
+            type: array
+            description: Valores de `order` de los que depende. Nunca cicla.
+            items:
+              type: integer
+              minimum: 1
+    total_estimated_minutes:
+      type:
+      - integer
+      - 'null'
+      minimum: 1
+      description: Suma de los pasos estimados. null si no se estimo ninguno.
+    warnings:
+      type: array
+      items:
+        type: string
+        minLength: 1
+      description: Lo que conviene mirar antes de dar por buena la descomposicion.
+    confidence:
+      type: number
+      minimum: 0
+      maximum: 1
+example:
+  contract: work-breakdown
+  contract_version: 1
+  summary: El informe mensual esta escrito, revisado y enviado.
+  kind: generic
+  steps:
+  - order: 1
+    title: Reunir los datos del mes
+    description: Descargar las cifras de las tres fuentes habituales.
+    completion_criteria: Las tres hojas descargadas y abiertas sin errores.
+    estimated_minutes: 45
+    optional: false
+    depends_on: []
+  - order: 2
+    title: Redactar el analisis
+    completion_criteria: Borrador completo con una conclusion por seccion.
+    estimated_minutes: 120
+    optional: false
+    depends_on:
+    - 1
+  - order: 3
+    title: Anadir graficos de apoyo
+    completion_criteria: Cada seccion con su grafico legible.
+    estimated_minutes: null
+    optional: true
+    depends_on:
+    - 2
+  total_estimated_minutes: 165
+  warnings:
+  - No consta quien tiene que aprobar el informe antes de enviarlo.
+  confidence: 0.7

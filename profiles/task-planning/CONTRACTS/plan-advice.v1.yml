@@ -1,0 +1,216 @@
+name: plan-advice
+version: 1
+description: Consejo sobre orden, estimaciones y riesgo de un conjunto de encargos.
+schema:
+  type: object
+  additionalProperties: false
+  required:
+  - contract
+  - contract_version
+  - advice_only
+  - sequence
+  - risks
+  - questions
+  - confidence
+  properties:
+    contract:
+      const: plan-advice
+    contract_version:
+      const: 1
+    advice_only:
+      const: true
+      description: 'Este documento es consejo. No cambia ningun plan por si mismo: quien decide
+        es el cliente.'
+    sequence:
+      type: array
+      description: El orden recomendado. La razon importa mas que el orden.
+      items:
+        type: object
+        additionalProperties: false
+        required:
+        - item
+        - position
+        - why
+        properties:
+          item:
+            type: string
+            minLength: 1
+            description: El encargo, con el nombre que traiga la peticion.
+          position:
+            type: integer
+            minimum: 1
+          why:
+            type: string
+            minLength: 1
+    estimate_comments:
+      type: array
+      description: Donde una estimacion no encaja con lo que se describe. Se comenta la que
+        viene dada; no se produce una nueva.
+      items:
+        type: object
+        additionalProperties: false
+        required:
+        - item
+        - direction
+        - why
+        - requires_confirmation
+        properties:
+          item:
+            type: string
+            minLength: 1
+          direction:
+            type: string
+            enum:
+            - looks_short
+            - looks_long
+            - unclear
+          why:
+            type: string
+            minLength: 1
+            description: Que hay en el encargo que no encaja con esa cifra.
+          requires_confirmation:
+            const: true
+    coherence_issues:
+      type: array
+      description: Lo que no se sostiene entre si, como una contradiccion o un orden imposible.
+      items:
+        type: object
+        additionalProperties: false
+        required:
+        - statement
+        - items
+        - why
+        - requires_confirmation
+        properties:
+          statement:
+            type: string
+            minLength: 1
+          items:
+            type: array
+            minItems: 1
+            items:
+              type: string
+              minLength: 1
+          why:
+            type: string
+            minLength: 1
+          requires_confirmation:
+            const: true
+    ambition:
+      type: object
+      additionalProperties: false
+      required:
+      - verdict
+      - why
+      - requires_confirmation
+      description: Si el conjunto parece mucho para lo que el usuario dice tener. Es una lectura
+        del enunciado, no un calculo.
+      properties:
+        verdict:
+          type: string
+          enum:
+          - looks_ambitious
+          - looks_reasonable
+          - cannot_tell
+          description: No hay «cabe» ni «no cabe». Eso lo decide el planificador del cliente,
+            que si conoce la disponibilidad real.
+        capacity_basis:
+          type:
+          - string
+          - 'null'
+          description: Lo que el usuario dijo sobre su capacidad, con sus palabras. Si no
+            dijo nada, `null`, y entonces el veredicto es `cannot_tell`.
+        why:
+          type: string
+          minLength: 1
+        requires_confirmation:
+          const: true
+    risks:
+      type: array
+      description: Que puede atascarse y por que.
+      items:
+        type: object
+        additionalProperties: false
+        required:
+        - item
+        - risk
+        - why
+        - severity
+        properties:
+          item:
+            type: string
+            minLength: 1
+          risk:
+            type: string
+            minLength: 1
+          why:
+            type: string
+            minLength: 1
+          severity:
+            type: string
+            enum:
+            - low
+            - medium
+            - high
+    questions:
+      type: array
+      description: Lo que, de saberse, cambiaria el consejo.
+      items:
+        type: string
+        minLength: 1
+    warnings:
+      type: array
+      description: Lo que hay que decirle a quien lea esto.
+      items:
+        type: string
+        minLength: 1
+    confidence:
+      type: number
+      minimum: 0
+      maximum: 1
+example:
+  contract: plan-advice
+  contract_version: 1
+  advice_only: true
+  sequence:
+  - item: Cerrar el guion de la charla
+    position: 1
+    why: Los demas encargos dependen de que el contenido este decidido.
+  - item: Preparar las diapositivas
+    position: 2
+    why: Solo tiene sentido con el guion cerrado; rehacerlas cuesta mas que esperar.
+  - item: Ensayar
+    position: 3
+    why: Necesita el material terminado para ser util.
+  estimate_comments:
+  - item: Preparar las diapositivas
+    direction: looks_short
+    why: Se describen quince diapositivas con graficos propios y la estimacion dada es de
+      una hora. Solo los graficos suelen llevar mas.
+    requires_confirmation: true
+  coherence_issues:
+  - statement: Ensayar aparece antes de tener el material que se ensaya.
+    items:
+    - Ensayar
+    - Preparar las diapositivas
+    why: El enunciado pide ensayar el lunes y terminar las diapositivas el jueves.
+    requires_confirmation: true
+  ambition:
+    verdict: looks_ambitious
+    capacity_basis: tengo dos tardes libres esta semana
+    why: Son tres encargos y uno de ellos ya parece infraestimado, frente a las dos tardes
+      que el usuario dice tener. Es una lectura de lo que el mismo cuenta, no un calculo de
+      su calendario.
+    requires_confirmation: true
+  risks:
+  - item: Cerrar el guion de la charla
+    risk: Puede quedarse abierto esperando una decision ajena.
+    why: El enunciado dice que el enfoque lo tiene que aprobar otra persona.
+    severity: high
+  questions:
+  - Las dos tardes libres, son enteras o compartidas con otras cosas?
+  - Quien aprueba el enfoque de la charla tiene fecha para responder?
+  warnings:
+  - 'Se pide ademas repartir el trabajo en dias y horas. Este perfil no agenda: eso lo hace
+    el planificador del cliente, que conoce la disponibilidad real.'
+  confidence: 0.7
