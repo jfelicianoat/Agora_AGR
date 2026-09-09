@@ -21,6 +21,31 @@ class BoardState(StrEnum):
     ARCHIVE = "archive"
     SCHEDULED = "scheduled"
 
+    @property
+    def is_terminal(self) -> bool:
+        """El trabajo acabo y nada lo reabre.
+
+        La distincion existe para que nadie tenga que deducirla de una lista
+        escrita a mano en tres sitios distintos: un cliente que sondea necesita
+        saber cuando dejar de mirar, y un runner que se reinicia necesita saber
+        que no debe resucitar una tarjeta cerrada.
+
+        `blocked` **no** es terminal: agoto sus intentos o tropezo con algo, y
+        una persona puede desbloquearla. Se ha parado, que no es lo mismo que
+        haber terminado.
+        """
+        return self in {BoardState.DONE, BoardState.ARCHIVE}
+
+    @property
+    def is_in_flight(self) -> bool:
+        """El trabajo sigue su curso por si solo, sin que nadie intervenga."""
+        return self in {BoardState.PENDING, BoardState.IN_PROGRESS, BoardState.SCHEDULED}
+
+    @property
+    def needs_intervention(self) -> bool:
+        """Parado, y no se movera hasta que alguien decida algo."""
+        return self is BoardState.BLOCKED
+
 
 @dataclass(frozen=True, slots=True)
 class RecoveryAction:
@@ -159,7 +184,14 @@ class Board:
         card.metadata.pop("claimed", None)
         card.append_record(actor, [reason], when=when)
         if card.attempts >= card.max_attempts:
-            return self._block_loaded(claimed_path, card, actor=actor, reason=reason, when=when)
+            return self._block_loaded(
+                claimed_path,
+                card,
+                actor=actor,
+                reason=reason,
+                when=when,
+                code="attempts_exhausted",
+            )
         card.save(claimed_path)
         destination = self.directory(BoardState.PENDING) / claimed_path.name
         _rename_transition(claimed_path, destination)
@@ -173,6 +205,7 @@ class Board:
         actor: str,
         reason: str,
         when: datetime | None = None,
+        code: str = "unknown",
     ) -> Path:
         _require_location(pending_path, self.directory(BoardState.PENDING))
         return self._block_loaded(
@@ -181,6 +214,7 @@ class Board:
             actor=actor,
             reason=reason,
             when=when,
+            code=code,
         )
 
     def unblock(
@@ -217,7 +251,13 @@ class Board:
         card = Card.load(source)
         card.metadata.pop("agent", None)
         card.metadata.pop("claimed", None)
-        card.metadata["cancelled"] = format_timestamp(utc_now())
+        # El motivo se guarda junto a la marca de tiempo, no solo en la bitacora:
+        # un cliente que pregunta por que se cancelo su trabajo no deberia tener
+        # que leer prosa para averiguarlo.
+        card.metadata["cancelled"] = {
+            "at": format_timestamp(utc_now()),
+            "reason": reason,
+        }
         card.append_record(actor, [f"CARD cancelled: {reason}"])
         card.save(source)
         destination = self.directory(BoardState.ARCHIVE) / name
@@ -233,11 +273,23 @@ class Board:
         actor: str,
         reason: str,
         when: datetime | None,
+        code: str = "unknown",
     ) -> Path:
+        """Aparta la CARD y deja escrito **por que**, con un codigo y con prosa.
+
+        El `code` se escribe aqui, en el momento de bloquear, y no se deduce
+        despues leyendo el texto: quien bloquea es quien sabe el motivo, y
+        adivinarlo a base de buscar palabras en una frase se rompe en cuanto
+        alguien reescribe la frase.
+        """
         moment = when or utc_now()
         card.metadata.pop("agent", None)
         card.metadata.pop("claimed", None)
-        card.metadata["blocked"] = {"at": format_timestamp(moment), "reason": reason}
+        card.metadata["blocked"] = {
+            "at": format_timestamp(moment),
+            "reason": reason,
+            "code": code,
+        }
         card.append_record(actor, [f"CARD blocked: {reason}"], when=moment)
         card.save(source)
         destination = self.directory(BoardState.BLOCKED) / source.name

@@ -58,6 +58,7 @@ class Card:
         recipient: str | None = None,
         max_attempts: int = 3,
         body: str = "",
+        external_reference: dict[str, Any] | None = None,
     ) -> Card:
         metadata: dict[str, Any] = {
             "function": function,
@@ -75,6 +76,8 @@ class Card:
             metadata["destination"] = destination
         if recipient:
             metadata["recipient"] = recipient
+        if external_reference:
+            metadata["external_reference"] = dict(external_reference)
         card = cls(metadata, body)
         card.ensure_record()
         card.validate()

@@ -24,6 +24,17 @@ class Profile:
     body: str
     source: Path
 
+    @property
+    def major(self) -> int:
+        """La linea de version del PROFILE: el `1` de `1.3.0`.
+
+        Es lo que un cliente puede fijar. Dentro de una misma linea, semver
+        promete que la semantica no cambia; entre lineas, no promete nada. Por
+        eso se elige por mayor y no por la version exacta: fijar `1.3.0` obliga
+        al cliente a perseguir cada correccion, y eso no protege de nada.
+        """
+        return int(self.version.split(".", 1)[0])
+
     @classmethod
     def load(cls, path: Path) -> Profile:
         try:

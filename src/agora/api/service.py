@@ -9,14 +9,16 @@ import re
 from collections.abc import Iterator
 from dataclasses import asdict
 from pathlib import Path
+from typing import Any
 
 from agora.api.contracts import CloseRequest, CreateCardRequest, InputResource, WorkItem
 from agora.application import AgoraApplication
 from agora.board import BoardState
 from agora.cards import Card
 from agora.dispatcher import Dispatcher, DispatchStatus
+from agora.profiles import load_profiles
 from agora.documents import atomic_write_bytes
-from agora.errors import InvalidTransition
+from agora.errors import CardFormatError, InvalidTransition
 from agora.harnesses import DeterministicHarness
 
 
@@ -37,10 +39,54 @@ class RemoteWorkService:
             recipient=request.recipient,
             max_attempts=request.max_attempts,
             body=request.body,
+            external_reference=(
+                request.external_reference.model_dump(mode="json")
+                if request.external_reference is not None
+                else None
+            ),
         )
         card.metadata["origin_identity"] = principal
         card.append_record("agora-api", [f"CARD accepted from authenticated client {principal}."])
         return self.board.create(request.filename, card)
+
+    def find_by_external_reference(
+        self, system: str, identifier: str
+    ) -> tuple[dict[str, Any], ...]:
+        """Las tarjetas que llevan esa referencia, en cualquier estado.
+
+        Devuelve una lista porque la referencia **no es unica**: un cliente
+        puede haber partido su trabajo en dos tarjetas, o haber reintentado.
+        Suponer que hay una sola la convertiria en clave primaria.
+
+        Se recorre el tablero entero. Es un tablero de trabajo humano, no una
+        base de datos: el coste es proporcional a lo que hay, y montar un
+        indice seria complejidad sin caso que la pida.
+        """
+        wanted_system = system.strip().lower()
+        wanted_id = identifier.strip()
+        found: list[dict[str, Any]] = []
+        for state in BoardState:
+            for path in self.board.paths(state):
+                try:
+                    card = Card.load(path)
+                except (CardFormatError, OSError):
+                    continue
+                reference = card.metadata.get("external_reference")
+                if not isinstance(reference, dict):
+                    continue
+                if (
+                    str(reference.get("system", "")).strip().lower() != wanted_system
+                    or str(reference.get("id", "")).strip() != wanted_id
+                ):
+                    continue
+                found.append(
+                    {
+                        "filename": path.name,
+                        "state": state.value,
+                        "external_reference": reference,
+                    }
+                )
+        return tuple(sorted(found, key=lambda item: item["filename"]))
 
     def work(self, profiles: tuple[str, ...]) -> tuple[WorkItem, ...]:
         allowed = {item.strip().lower() for item in profiles if item.strip()}
@@ -51,6 +97,7 @@ class RemoteWorkService:
             self.application.profiles_root,
             DeterministicHarness(self.application.workspace),
             max_dispatches_per_round=1_000_000,
+            trusted_origins=self.application.trusted_origins,
         )
         outcomes = dispatcher.run_once(dry_run=True)
         items: list[WorkItem] = []
@@ -87,11 +134,26 @@ class RemoteWorkService:
         if selected is None or selected.profile.lower() != profile.lower():
             raise InvalidTransition("CARD is not eligible for this runner/profile")
         path = self.board.claim(filename, runner_id)
-        self.board.progress(path, runner_id, [f"Remote profile selected: {profile}."])
+        resolved = self._profile_version(profile)
+        etiqueta = f"{profile}@{resolved}" if resolved else profile
+        self.board.progress(path, runner_id, [f"Remote profile selected: {etiqueta}."])
         card = Card.load(path)
         card.metadata["profile"] = profile
+        if resolved:
+            # La version exacta que ejecuto la tarjeta. Sin esto, dentro de seis
+            # meses no hay forma de saber que produjo un artefacto: el fichero
+            # del perfil habra cambiado y el artefacto no dice nada.
+            card.metadata["profile_version"] = resolved
         card.save(path)
         return path
+
+    def _profile_version(self, name: str) -> str | None:
+        matches = [
+            profile
+            for profile in load_profiles(self.application.profiles_root)
+            if profile.name == name
+        ]
+        return matches[0].version if len(matches) == 1 else None
 
     def progress(
         self,

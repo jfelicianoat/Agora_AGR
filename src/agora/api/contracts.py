@@ -11,6 +11,32 @@ class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class ExternalReference(StrictModel):
+    """El identificador que el cliente ya tiene, para reconciliar despues.
+
+    Agora **no lo interpreta**: ni valida el formato de `id`, ni conoce el
+    `system`, ni deduce nada de ninguno de los dos. Solo lo guarda y deja
+    buscarlo.
+
+    Tres cosas que este campo **no** es:
+
+    - **No es una clave de seguridad.** Conocer una referencia no da acceso a
+      nada; el acceso lo dan el token y los ambitos, como en todo lo demas.
+      Buscar por referencia exige `cards:read` igual que leer una tarjeta.
+    - **No es unica.** Dos tarjetas pueden compartirla —un reintento, un
+      encargo partido en dos— y por eso buscar devuelve una **lista**. Tratarla
+      como unica la convertiria en una clave primaria de facto, que es
+      justamente lo que no debe ser.
+    - **No es la identidad de la tarjeta.** Esa sigue siendo el `filename`.
+    """
+
+    system: str = Field(min_length=1, max_length=120)
+    id: str = Field(min_length=1, max_length=200)
+    #: La forma de este campo, no la del trabajo del cliente. Sube si algun dia
+    #: se le anaden campos, para que un cliente antiguo sepa que esta leyendo.
+    version: int = Field(default=1, ge=1, le=1000)
+
+
 class CreateCardRequest(StrictModel):
     filename: str = Field(min_length=4, max_length=180)
     function: str = Field(min_length=1, max_length=120)
@@ -21,6 +47,7 @@ class CreateCardRequest(StrictModel):
     recipient: str | None = Field(default=None, max_length=120)
     max_attempts: int = Field(default=3, ge=1, le=100)
     body: str = Field(default="", max_length=100_000)
+    external_reference: ExternalReference | None = None
 
 
 class ClaimRequest(StrictModel):

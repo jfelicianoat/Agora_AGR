@@ -20,10 +20,13 @@ from agora.api.contracts import (
     YieldRequest,
 )
 from agora.api.service import RemoteWorkService
+from agora.api.projection import project
 from agora.api.storage import EventStore, IdempotencyConflict, IdempotencyStore
 from agora.application import AgoraApplication
+from agora.contracts import ContractRegistry
 from agora.board import BoardState
-from agora.errors import CardFormatError, ClaimConflict, InvalidTransition
+from agora.cards import Card
+from agora.errors import AgoraError, CardFormatError, ClaimConflict, InvalidTransition
 from agora.security.fastapi import ALL_AGORA_SCOPES, BearerAuthenticator, install_oauth_endpoints
 from agora.security.oauth import OAuthAuthority, OAuthPrincipal
 
@@ -47,6 +50,11 @@ class ApiSettings:
 
 def create_api(application: AgoraApplication, settings: ApiSettings) -> FastAPI:
     application.initialize()
+    # Una tarjeta creada por este API llega con `origin` puesto al principal
+    # autenticado. Sin esto, el despachador la bloquearia por «untrusted
+    # origin» despues de haber respondido 201: el cliente lo habria hecho todo
+    # bien y su trabajo moriria igual.
+    application.trust_origin(settings.principal)
     remote = RemoteWorkService(application)
     private_root = application.workspace / ".agora"
     idempotency = IdempotencyStore(private_root / "idempotency.json")
@@ -115,6 +123,24 @@ def create_api(application: AgoraApplication, settings: ApiSettings) -> FastAPI:
             "errors": [asdict(error) for error in snapshot.errors],
         }
 
+    @app.get("/api/v1/cards")
+    def find_cards(
+        _principal: CardsRead,
+        system: Annotated[str, Query(min_length=1, max_length=120)],
+        external_id: Annotated[str, Query(min_length=1, max_length=200)],
+    ) -> dict[str, Any]:
+        """Reconciliar: que tarjetas corresponden a este trabajo mio.
+
+        Es lo que le permite a un cliente recuperarse de haber perdido el
+        `filename` —un corte a mitad de la creacion, una base de datos que se
+        restauro— sin tener que adivinar nada.
+
+        Devuelve una **lista**: la referencia no es unica ni pretende serlo.
+        Y exige `cards:read` como cualquier otra lectura: conocer una
+        referencia no da acceso a nada por si solo.
+        """
+        return {"cards": list(remote.find_by_external_reference(system, external_id))}
+
     @app.get("/api/v1/cards/{state_name}/{filename}")
     def card(
         state_name: BoardState, filename: str, _principal: CardsRead
@@ -123,8 +149,18 @@ def create_api(application: AgoraApplication, settings: ApiSettings) -> FastAPI:
 
     @app.get("/api/v1/cards/{filename}")
     def card_status(filename: str, _principal: CardsRead) -> dict[str, object]:
+        """El estado de una tarjeta, y si ya no va a cambiar.
+
+        `terminal` le ahorra al cliente tener que llevar escrita la lista de
+        estados finales: mientras sea `false`, sigue mirando.
+        """
         state_name, payload = remote.locate(filename)
-        return {"state": state_name.value, **payload}
+        metadata = payload.get("metadata")
+        return {
+            "state": state_name.value,
+            **project(state_name, metadata if isinstance(metadata, dict) else {}),
+            **payload,
+        }
 
     @app.get("/api/v1/cards/{filename}/artifacts/{index}")
     def card_artifact(filename: str, index: int, _principal: CardsRead) -> FileResponse:
@@ -133,15 +169,87 @@ def create_api(application: AgoraApplication, settings: ApiSettings) -> FastAPI:
 
     @app.get("/api/v1/profiles")
     def profiles(_principal: CardsRead) -> dict[str, Any]:
+        """Lo que un cliente necesita saber de cada capacidad.
+
+        La respuesta se compone campo a campo a proposito. `ProfileSummary`
+        lleva tambien la ruta del fichero en disco, que le sirve a la ventana de
+        escritorio del propio tablero y **no** a un cliente: revela la
+        estructura del PC ajeno y no le permite hacer nada. Serializar el objeto
+        entero la publicaba sin querer.
+        """
         snapshot = application.snapshot()
-        return {"profiles": [asdict(profile) for profile in snapshot.profiles]}
+        return {
+            "profiles": [
+                {
+                    "name": profile.name,
+                    "version": profile.version,
+                    "major": int(profile.version.split(".", 1)[0]),
+                    "function": profile.function,
+                    "description": profile.description,
+                    "handles": list(profile.handles),
+                    "refuses": list(profile.refuses),
+                    "skills": list(profile.skills),
+                    "produces": list(profile.produces),
+                }
+                for profile in snapshot.profiles
+            ]
+        }
+
+    @app.get("/api/v1/contracts")
+    def contracts(_principal: CardsRead) -> dict[str, Any]:
+        """Los documentos que Agora sabe producir, con su esquema.
+
+        Un cliente necesita esto antes de mandar la primera tarjeta: `produces`
+        de cada perfil le dice **que** va a recibir, y esto le dice **con que
+        forma**, para poder validarlo por su cuenta.
+
+        Se lee del disco en cada peticion, como los PROFILE: un contrato es una
+        promesa publica y corregir una no debe exigir reiniciar el tablero.
+        """
+        registry = ContractRegistry.discover(application.profiles_root)
+        if registry is None:
+            return {"contracts": []}
+        return {
+            "contracts": [
+                {
+                    "name": contract.name,
+                    "version": contract.version,
+                    "reference": contract.reference,
+                    "description": contract.description,
+                    "schema": contract.schema,
+                    "example": contract.example,
+                }
+                for contract in registry.catalogue()
+            ]
+        }
 
     @app.get("/api/v1/events")
     def list_events(
         _principal: CardsRead,
         after: Annotated[int, Query(ge=0)] = 0,
+        limit: Annotated[int, Query(ge=1, le=1000)] = 200,
     ) -> dict[str, Any]:
-        return {"events": events.since(after)}
+        """Sondeo con cursor: la forma barata de seguir muchas tarjetas a la vez.
+
+        Un cliente **no necesita ningun listener entrante**. Guarda `cursor`,
+        vuelve cuando quiera y recibe solo lo que ha pasado desde entonces. Cada
+        evento trae ya el estado y la referencia externa, asi que no hace falta
+        un `GET` por tarjeta para saber que ha cambiado.
+
+        `missed: true` significa que el cursor se quedo por detras de la ventana
+        que guarda el tablero y **se perdieron eventos**. No es un error: es el
+        aviso de que hay que reconciliar, por ejemplo con la busqueda por
+        referencia externa. Callarlo dejaria al cliente creyendo que esta al dia.
+        """
+        page = events.page(after, limit)
+        return {
+            "events": list(page.events),
+            "cursor": page.cursor,
+            "oldest_available": page.oldest_available,
+            "newest": page.newest,
+            "missed": page.missed,
+            "more": page.more,
+        }
 
     @app.get("/api/v1/work", response_model=list[WorkItem])
     def work(
@@ -179,7 +287,15 @@ def create_api(application: AgoraApplication, settings: ApiSettings) -> FastAPI:
             payload = {"filename": path.name, "state": BoardState.PENDING.value, "replayed": False}
             idempotency.save("create", key, digest, status_code=201, payload=payload)
             events.emit(
-                "card.created", {"filename": path.name, "principal": authenticated.subject}
+                "card.created",
+                {
+                    "filename": path.name,
+                    "state": BoardState.PENDING.value,
+                    "status": "queued",
+                    "terminal": BoardState.PENDING.is_terminal,
+                    "principal": authenticated.subject,
+                    **_reference_of(path),
+                },
             )
             return JSONResponse(status_code=201, content=payload)
 
@@ -358,8 +474,43 @@ def _mutation(
             "replayed": False,
         }
         idempotency.save(scope, key, digest, status_code=200, payload=payload)
-        events.emit(event_kind, {"filename": path.name})
+        reached = BoardState(payload["state"])
+        events.emit(
+            event_kind,
+            {
+                "filename": path.name,
+                "state": reached.value,
+                **project(reached, _metadata_of(path)),
+                **_reference_of(path),
+            },
+        )
         return JSONResponse(status_code=200, content=payload)
+
+
+def _metadata_of(path: Path) -> dict[str, Any]:
+    """La metadata de la CARD, o nada si no se puede leer.
+
+    Un fichero ilegible no puede tumbar el evento: lo que se estaba haciendo con
+    la tarjeta ya ocurrio, y callar el evento seria perder el hecho.
+    """
+    try:
+        return dict(Card.load(path).metadata)
+    except (AgoraError, OSError):
+        return {}
+
+
+def _reference_of(path: Path) -> dict[str, Any]:
+    """La referencia externa de la CARD, si la lleva.
+
+    Va en el evento para que un cliente pueda atarlo con su propio trabajo sin
+    tener que leer la tarjeta. Una CARD ilegible no puede tumbar el evento: lo
+    que se estaba haciendo con ella ya ocurrio.
+    """
+    try:
+        reference = Card.load(path).metadata.get("external_reference")
+    except (AgoraError, OSError):
+        return {}
+    return {"external_reference": reference} if isinstance(reference, dict) else {}
 
 
 def _reached_state(path: Path, expected: BoardState) -> str:

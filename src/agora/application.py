@@ -7,6 +7,7 @@ desktop UI needs in F1, keeping filesystem ownership and domain transitions in t
 from __future__ import annotations
 
 from collections import deque
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -15,11 +16,12 @@ from uuid import uuid4
 
 from agora.board import Board, BoardState
 from agora.cards import Card, format_timestamp, utc_now
-from agora.dispatcher import Dispatcher, DispatchOutcome
+from agora.dispatcher import DEFAULT_TRUSTED_ORIGINS, Dispatcher, DispatchOutcome
 from agora.documents import atomic_write_text
 from agora.errors import AgoraError, CardFormatError, ProfileFormatError
 from agora.harnesses import DeterministicHarness, WorkerLauncher
 from agora.profiles import Profile
+from agora.skills import load_profile_skills
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,6 +54,10 @@ class ProfileSummary:
     handles: tuple[str, ...]
     refuses: tuple[str, ...]
     skills: tuple[str, ...]
+    #: Los contratos de salida que prometen sus skills, como `nombre@version`.
+    #: Es lo que un cliente necesita para saber que documento va a recibir antes
+    #: de mandar la primera tarjeta.
+    produces: tuple[str, ...]
     harness: str | None
     source: Path
 
@@ -93,13 +99,26 @@ class AgoraApplication:
         profiles_name: str = "AGENTS",
         launcher: WorkerLauncher | None = None,
         activity_limit: int = 200,
+        trusted_origins: Iterable[str] = DEFAULT_TRUSTED_ORIGINS,
     ) -> None:
         self.workspace = workspace.resolve()
         self.board = Board(self.workspace / board_name)
         self.profiles_root = self.workspace / profiles_name
         self.launcher = launcher or DeterministicHarness(self.workspace)
         self._activity: deque[ActivityEntry] = deque(maxlen=max(1, activity_limit))
+        # Quien puede depositar trabajo. `trust_origin` lo amplia cuando el API
+        # arranca con un principal propio: una tarjeta que llego autenticada por
+        # HTTPS no puede quedarse fuera por no llamarse «human».
+        self.trusted_origins: tuple[str, ...] = tuple(
+            dict.fromkeys(item.strip().lower() for item in trusted_origins if item.strip())
+        )
         self._dispatcher_status = "idle"
+
+    def trust_origin(self, origin: str) -> None:
+        """Anade un origen de confianza. Idempotente y sin orden significativo."""
+        value = origin.strip().lower()
+        if value and value not in self.trusted_origins:
+            self.trusted_origins = (*self.trusted_origins, value)
 
     def initialize(self) -> None:
         self.board.initialize()
@@ -152,9 +171,12 @@ class AgoraApplication:
         self._dispatcher_status = "simulating" if dry_run else "running"
         self._log("info", "Dispatcher dry-run started" if dry_run else "Dispatcher started")
         try:
-            outcomes = Dispatcher(self.board, self.profiles_root, self.launcher).run_once(
-                dry_run=dry_run
-            )
+            outcomes = Dispatcher(
+                self.board,
+                self.profiles_root,
+                self.launcher,
+                trusted_origins=self.trusted_origins,
+            ).run_once(dry_run=dry_run)
         except (AgoraError, OSError) as exc:
             self._dispatcher_status = "error"
             self._log("error", f"Dispatcher failed: {type(exc).__name__}: {exc}")
@@ -206,11 +228,35 @@ class AgoraApplication:
                     profile.handles,
                     profile.refuses,
                     profile.skills,
+                    self._produces(profile, errors),
                     profile.harness,
                     path.resolve(),
                 )
             )
         return tuple(profiles), tuple(errors)
+
+    def _produces(
+        self, profile: Profile, errors: list[VisibleError]
+    ) -> tuple[str, ...]:
+        """Los contratos que prometen las skills del perfil, sin repetir.
+
+        Un perfil cuyas skills no cargan sigue apareciendo en el censo: el
+        cliente tiene que poder ver que existe y que algo va mal en el, en vez
+        de que desaparezca del listado sin explicacion.
+        """
+        try:
+            skills = load_profile_skills(profile.source.parent, profile.skills)
+        except (AgoraError, OSError) as exc:
+            errors.append(VisibleError(str(profile.source), str(exc)))
+            return ()
+        seen: list[str] = []
+        for skill in skills:
+            if skill.output_contract is None:
+                continue
+            reference = f"{skill.output_contract}@{skill.output_contract_version}"
+            if reference not in seen:
+                seen.append(reference)
+        return tuple(seen)
 
     def _log(self, level: str, message: str, *, when: datetime | None = None) -> None:
         self._activity.append(

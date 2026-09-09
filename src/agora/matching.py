@@ -42,11 +42,30 @@ class MatchResult:
     reason: str = ""
 
 
+def parse_recipient(value: str) -> tuple[str, int | None]:
+    """Separa `nombre@mayor` en sus dos mitades.
+
+    Sin `@` no hay version fijada, que es como se ha comportado siempre: el
+    cliente nombra el perfil y se queda con el que haya. Con `@N` esta pidiendo
+    **esa linea de version**, y si no esta se le dice; nunca se le da otra.
+    """
+    name, separator, wanted = value.partition("@")
+    if not separator:
+        return value.strip(), None
+    if not wanted.strip().isdigit():
+        raise ValueError(f"la version fijada tiene que ser un numero de linea: {value!r}")
+    return name.strip(), int(wanted)
+
+
 def match_card(card: Card, profiles: Iterable[Profile]) -> MatchResult:
     available = tuple(profiles)
     if card.recipient:
+        try:
+            wanted_name, wanted_major = parse_recipient(card.recipient)
+        except ValueError as exc:
+            return MatchResult(MatchStatus.INVALID_RECIPIENT, reason=str(exc))
         direct = [
-            profile for profile in available if normalize(profile.name) == normalize(card.recipient)
+            profile for profile in available if normalize(profile.name) == normalize(wanted_name)
         ]
         if len(direct) != 1 or normalize(direct[0].function) != normalize(card.function):
             return MatchResult(
@@ -54,10 +73,25 @@ def match_card(card: Card, profiles: Iterable[Profile]) -> MatchResult:
                 candidates=tuple(profile.name for profile in direct),
                 reason="recipient must name exactly one profile with the same function",
             )
+        if wanted_major is not None and direct[0].major != wanted_major:
+            # Ejecutar otra linea de version seria darle al cliente un resultado
+            # con una forma que no pidio, y ademas en silencio.
+            return MatchResult(
+                MatchStatus.INVALID_RECIPIENT,
+                candidates=(f"{direct[0].name}@{direct[0].major}",),
+                reason=(
+                    f"se pidio {wanted_name}@{wanted_major} y aqui hay "
+                    f"{direct[0].name}@{direct[0].major} ({direct[0].version})"
+                ),
+            )
         return MatchResult(
             MatchStatus.MATCHED,
             profile=direct[0],
-            reason="valid recipient selected the profile directly",
+            reason=(
+                f"valid recipient selected {direct[0].name}@{direct[0].major} directly"
+                if wanted_major is not None
+                else "valid recipient selected the profile directly"
+            ),
         )
 
     ranked: list[tuple[int, str, Profile]] = []

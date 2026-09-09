@@ -106,6 +106,13 @@ def _output_instruction(policy: BrokerPolicy, skills: tuple[Skill, ...]) -> str:
 
     Lo que sí copia es un **ejemplo relleno**. El esquema sigue siendo lo que
     valida la respuesta antes de escribir el artefacto.
+
+    Hay una cosa que el ejemplo **no** puede enseñar: un vocabulario cerrado del
+    que sólo aparece un valor. Se midió al sacar el esquema del prompt en A06 —
+    el modelo escribió `in_progress` donde el contrato admite `partial`, y la
+    tarjeta murió en la validación. Así que los `enum` viajan aparte, en una
+    lista corta. Es lo único del esquema que hace falta y que el ejemplo no
+    puede mostrar.
     """
     if policy.output_schema is None:
         return ""
@@ -122,17 +129,19 @@ def _output_instruction(policy: BrokerPolicy, skills: tuple[Skill, ...]) -> str:
         return (
             heading
             + "Responde EXCLUSIVAMENTE con un unico documento JSON del contrato"
-            + f"{named}, tal y como lo describe `output_schema`. La raiz del "
-            "documento es el objeto descrito: no lo envuelvas bajo ninguna "
-            "clave, no devuelvas el esquema y no anadas texto alrededor."
+            + f"{named}. La raiz del documento es el objeto del contrato: no lo "
+            "envuelvas bajo ninguna clave, no devuelvas el esquema y no anadas "
+            "texto alrededor."
+            + _closed_vocabularies(policy.output_schema)
         )
     rendered = json.dumps(example, ensure_ascii=False, indent=2)
     return (
         heading
         + "Responde EXCLUSIVAMENTE con un unico documento JSON del contrato"
         + f"{named}, con **esta misma forma** y tus propios datos:\n\n"
-        + f"```\n{rendered}\n```\n\n"
-        "Reglas, sin excepciones:\n\n"
+        + f"```\n{rendered}\n```\n"
+        + _closed_vocabularies(policy.output_schema)
+        + "\nReglas, sin excepciones:\n\n"
         "- devuelve un documento **como ese**, no el esquema que lo describe;\n"
         "- la raiz es ese objeto: no lo envuelvas bajo ninguna clave;\n"
         "- usa exactamente esos nombres de campo, ni parecidos ni traducidos;\n"
@@ -142,6 +151,36 @@ def _output_instruction(policy: BrokerPolicy, skills: tuple[Skill, ...]) -> str:
         "- si un dato no se conoce, usa `null` donde el contrato lo permita en "
         "vez de inventarlo."
     )
+
+
+def _closed_vocabularies(schema: dict[str, Any]) -> str:
+    """Los `enum` del contrato, con su sitio, para que no se inventen valores."""
+    found = sorted(_walk_enums(schema, ""), key=lambda item: item[0])
+    if not found:
+        return ""
+    lines = "\n".join(
+        f"- `{where}`: {' | '.join(str(value) for value in values)}"
+        for where, values in found
+    )
+    return (
+        "\nEstos campos solo admiten estos valores. No inventes otros, aunque el "
+        "ejemplo solo ensene uno:\n\n" + lines + "\n"
+    )
+
+
+def _walk_enums(node: Any, where: str) -> list[tuple[str, list[Any]]]:
+    if not isinstance(node, dict):
+        return []
+    found: list[tuple[str, list[Any]]] = []
+    values = node.get("enum")
+    if isinstance(values, list) and values and where:
+        found.append((where, values))
+    for field, child in (node.get("properties") or {}).items():
+        found.extend(_walk_enums(child, f"{where}.{field}" if where else field))
+    items = node.get("items")
+    if isinstance(items, dict):
+        found.extend(_walk_enums(items, f"{where}[]"))
+    return found
 
 
 def _output_section(policy: BrokerPolicy) -> dict[str, Any]:

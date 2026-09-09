@@ -1,6 +1,6 @@
 ---
 name: task-decomposer
-version: 1.2.0
+version: 1.3.0
 description: Parte un encargo grande en pasos ejecutables y comprobables.
 function: decompose
 handles:
@@ -25,7 +25,7 @@ guarantees:
   - ningun paso repite el encargo entero
   - las dependencias no forman ciclos
   - estima esfuerzo, nunca fechas
-model_capacity: standard
+model_capacity: maximum
 model_modality: text
 skills:
   - decompose-work
@@ -78,3 +78,14 @@ repartirlos en dias y horas no es cosa tuya: eso lo decide el planificador del
 cliente, que es quien conoce su disponibilidad real.
 
 Negarse a todo deja al usuario sin nada, y lo que pedia si se podia hacer.
+
+# Por que este perfil exige un modelo capaz
+
+`maximum` no esta aqui por lujo. Con `standard` el broker enruta libremente, y
+una sola tarjeta agoto sus tres intentos sin producir nada: un modelo pequeno
+corrompio los nombres de campo a mitad de generacion
+(`completion_ Од_criteria`), otro proveedor no estaba disponible, y el tercer
+intento devolvio el prompt entero —`PROMPT_ECHOED`, no reintentable— y la
+tarjeta quedo bloqueada.
+
+Un documento con contrato necesita un modelo que sepa seguirlo.

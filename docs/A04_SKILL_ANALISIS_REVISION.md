@@ -192,7 +192,8 @@ alerta»—, sin contrato. Esa ejecución no vale como evidencia: prueba justo l
 contrario, que el runner leía su copia antigua.
 
 Tras copiar `PROFILE.md` y `skills/analyze-review/SKILL.md` a
-`C:\Agora\AGENTSeview-analyzer\` del PC de IA —**sin reiniciar el
+`C:\Agora\AGENTS
+eview-analyzer\` del PC de IA —**sin reiniciar el
 runner**, como estaba previsto—, la tarjeta `prueba-analisis-revision-2.md` se
 completó al primer intento:
 
@@ -247,11 +248,9 @@ Y los dos avisos:
   reiniciarlo; pero mientras la copia no esté, sigue ejecutando la versión
   antigua **sin avisar de nada**, y el resultado parece correcto. La primera
   ejecución de §6 es justo ese caso.
-- **El resto de perfiles con contrato siguen en `standard`**: `task-intake`
-  (A02) y `task-decomposer` (A03) pueden caer en un modelo que eche el prompt
-  por la boca y morir sin reintento. Se verificaron con modelos capaces, así que
-  su evidencia es válida, pero la fragilidad de enrutado es la misma. Conviene
-  subirlos a `maximum` y repetir sus verificaciones.
+- ~~`task-intake` (A02) y `task-decomposer` (A03) siguen en `standard`~~ —
+  **cerrado en A06 §7**, después de que una tarjeta agotara sus tres intentos
+  con tres modelos distintos y quedara bloqueada sin producir nada.
 - **`based_on` fuera de rango** no lo puede comprobar el esquema. Ninguna
   ejecución real lo ha producido, pero un índice inventado pasaría la
   validación. Si aparece, el sitio para comprobarlo es `enforce`.

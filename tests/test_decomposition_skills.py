@@ -47,7 +47,8 @@ def generic(skills: tuple[Skill, ...]) -> Skill:
 
 
 def test_the_profile_declares_generic_and_specialised(profile: Profile) -> None:
-    assert profile.version == "1.2.0"
+    # La version concreta no se fija aqui: sube cada vez que el perfil cambia.
+    assert profile.version.split(".")[0] == "1"
     assert profile.skills == ("decompose-work", *SPECIALISED)
 
 

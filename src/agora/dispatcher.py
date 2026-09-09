@@ -37,6 +37,13 @@ class DispatchOutcome:
     final_path: Path | None = None
 
 
+#: Quien puede depositar trabajo por el sistema de ficheros. La lista existe
+#: para que una tarjeta dejada a mano en la carpeta no se ejecute sola; un
+#: cliente que llega por el API autenticado se anade a esta lista al arrancar
+#: el API, porque ya ha pasado una comprobacion mas fuerte que un nombre.
+DEFAULT_TRUSTED_ORIGINS: tuple[str, ...] = ("human", "athena", "agora", "test")
+
+
 class Dispatcher:
     def __init__(
         self,
@@ -44,7 +51,7 @@ class Dispatcher:
         profiles_root: Path,
         launcher: WorkerLauncher,
         *,
-        trusted_origins: Iterable[str] = ("human", "athena", "agora", "test"),
+        trusted_origins: Iterable[str] = DEFAULT_TRUSTED_ORIGINS,
         max_dispatches_per_round: int = 3,
     ) -> None:
         self.board = board
@@ -174,6 +181,7 @@ class Dispatcher:
                 path,
                 actor="dispatcher",
                 reason=f"Untrusted origin: {card.metadata['origin']}",
+                code="untrusted_origin",
             )
             return DispatchOutcome(
                 path.name, DispatchStatus.BLOCKED, reason="untrusted origin", final_path=blocked

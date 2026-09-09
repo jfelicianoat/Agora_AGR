@@ -77,6 +77,23 @@ class IdempotencyStore:
         return entries if isinstance(entries, dict) else {}
 
 
+@dataclass(frozen=True, slots=True)
+class EventPage:
+    """Lo que un cliente necesita para sondear sin perderse nada."""
+
+    events: tuple[dict[str, Any], ...]
+    #: Lo que hay que mandar como `after` en la siguiente vuelta.
+    cursor: int
+    #: El evento mas antiguo que el tablero conserva.
+    oldest_available: int
+    #: El ultimo evento que existe, haya llegado en esta pagina o no.
+    newest: int
+    #: `True` si el cursor del cliente quedo por detras de la ventana.
+    missed: bool
+    #: `True` si quedan eventos por leer: hay que volver a pedir sin esperar.
+    more: bool
+
+
 class EventStore:
     def __init__(self, path: Path, *, limit: int = 10_000) -> None:
         self.path = path
@@ -103,6 +120,35 @@ class EventStore:
     def since(self, after: int = 0) -> tuple[dict[str, Any], ...]:
         with self._lock:
             return tuple(event for event in self._read() if int(event.get("id", 0)) > after)
+
+    def page(self, after: int = 0, limit: int = 200) -> EventPage:
+        """Una pagina de eventos, y lo que hace falta para saber si falta alguno.
+
+        El almacen guarda una ventana de los ultimos `limit` eventos. Un cliente
+        que estuvo apagado el tiempo suficiente puede volver con un cursor
+        anterior a esa ventana, y entonces **le faltan eventos que no sabe que
+        existieron**. Devolver solo la lista lo dejaria creyendo que esta al dia.
+
+        Por eso la pagina dice cual es el evento mas antiguo que queda: si es
+        posterior al cursor del cliente, hubo un hueco y hay que decirselo.
+        """
+        with self._lock:
+            events = self._read()
+        oldest = int(events[0]["id"]) if events else 0
+        newest = int(events[-1]["id"]) if events else 0
+        pending = [event for event in events if int(event.get("id", 0)) > after]
+        page = pending[: max(1, limit)]
+        return EventPage(
+            events=tuple(page),
+            cursor=int(page[-1]["id"]) if page else max(after, newest),
+            oldest_available=oldest,
+            newest=newest,
+            # Un cursor por detras de la ventana significa que se perdieron
+            # eventos. `after == 0` es un cliente que empieza de cero y no ha
+            # perdido nada: no tenia cursor que quedarse atras.
+            missed=bool(events) and after > 0 and after < oldest - 1,
+            more=len(pending) > len(page),
+        )
 
     def _read(self) -> list[dict[str, Any]]:
         if not self.path.is_file():

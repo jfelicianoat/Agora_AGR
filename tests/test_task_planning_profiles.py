@@ -58,18 +58,31 @@ def test_each_profile_declares_its_own_function(profiles: tuple[Profile, ...]) -
 
 
 def test_every_profile_is_versioned(profiles: tuple[Profile, ...]) -> None:
-    """La version sube cuando el contrato cambia, no todas a la vez.
+    """La version sube cuando el contrato del perfil cambia, no todas a la vez.
 
-    `task-intake` va por 1.1.0 desde que declara su skill; los demas siguen en
-    1.0.0 porque su contrato no ha cambiado.
+    No se fija aqui ningun numero concreto: hacerlo obliga a tocar esta prueba
+    cada vez que un perfil evoluciona, que es justo lo contrario de lo que se
+    quiere proteger. Lo que se comprueba es que son semver validos, que cada
+    perfil se explica, y que **no van todos al mismo paso**.
     """
     for profile in profiles:
         major, minor, patch = profile.version.split(".")
         assert major.isdigit() and minor.isdigit() and patch.isdigit(), profile.name
         assert profile.description.strip()
         assert profile.body.strip()
+
     versions = {profile.name: profile.version for profile in profiles}
-    assert versions["task-intake"] == "1.1.0"
+    assert len(set(versions.values())) > 1, versions
+
+
+def test_a_profile_that_gained_a_skill_moved_past_its_first_version(
+    profiles: tuple[Profile, ...],
+) -> None:
+    """Declarar una skill cambia lo que el perfil promete: eso se versiona."""
+    for profile in profiles:
+        if not profile.skills:
+            continue
+        assert profile.version != "1.0.0", profile.name
 
 
 def test_no_profile_declares_a_skill_it_does_not_have(

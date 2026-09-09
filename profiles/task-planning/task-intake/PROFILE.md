@@ -1,6 +1,6 @@
 ---
 name: task-intake
-version: 1.1.0
+version: 1.2.0
 description: Convierte una peticion vaga en un encargo entendido y acotado.
 function: understand
 handles:
@@ -22,7 +22,7 @@ guarantees:
   - no inventa hechos que no esten en la peticion
   - separa lo que sabe de lo que supone
   - no propone fechas ni horarios
-model_capacity: standard
+model_capacity: maximum
 model_modality: text
 skills:
   - adaptive-task-interview
@@ -60,3 +60,14 @@ perfil las separa.
 Si la peticion pide agendar, calcular disponibilidad o repartir trabajo en el
 tiempo, no es de este perfil. Tampoco si pide directamente la lista de pasos:
 eso es descomponer.
+
+# Por que este perfil exige un modelo capaz
+
+`maximum` no esta aqui por lujo. Con `standard` el broker enruta libremente, y
+una sola tarjeta agoto sus tres intentos sin producir nada: un modelo pequeno
+corrompio los nombres de campo a mitad de generacion
+(`completion_ Од_criteria`), otro proveedor no estaba disponible, y el tercer
+intento devolvio el prompt entero —`PROMPT_ECHOED`, no reintentable— y la
+tarjeta quedo bloqueada.
+
+Un documento con contrato necesita un modelo que sepa seguirlo.

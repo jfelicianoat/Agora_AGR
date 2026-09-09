@@ -351,3 +351,245 @@ def test_the_contracts_directory_is_not_mistaken_for_a_profile() -> None:
     names = {profile.name for profile in load_profiles(PROFILES_ROOT)}
     assert CONTRACTS_DIRNAME not in names
     assert "review-analyzer" in names
+
+
+# --- Lo que el ejemplo no puede ensenar --------------------------------------
+
+
+def _prompt_for(profile_name: str) -> str:
+    from agora.broker.contracts import BrokerPolicy
+    from agora.broker.executor import apply_skill_output_contract
+    from agora.broker.request_builder import build_broker_request
+    from agora.cards import Card
+
+    root = PROFILES_ROOT / profile_name
+    profile = Profile.load(root / "PROFILE.md")
+    skills = load_profile_skills(root, profile.skills)
+    card = Card.parse(
+        "---\n"
+        f"function: {profile.function}\n"
+        "request: 'algo: para la prueba'\n"
+        "created: 2026-09-08T00:00:00Z\n"
+        "origin: test\npaths: []\nattempts: 0\n---\n\ncuerpo\n"
+    )
+    policy = apply_skill_output_contract(BrokerPolicy(), skills)
+    request = build_broker_request(
+        profile, skills, card, policy=policy, idempotency_key="k"
+    )
+    return request["content"]["prompt"]
+
+
+def test_the_schema_no_longer_travels_in_the_prompt() -> None:
+    """Con el esquema delante el modelo devolvia el esquema. Se midio en A03."""
+    prompt = _prompt_for("review-analyzer")
+    assert "additionalProperties" not in prompt
+    assert "output_schema" not in prompt
+
+
+def test_the_closed_vocabularies_do_travel() -> None:
+    """Se midio al quitar el esquema: el modelo escribio `in_progress`, que no
+    existe, porque el ejemplo solo ensenaba un valor del enum. La tarjeta murio
+    en la validacion. Un ejemplo no puede ensenar un vocabulario cerrado."""
+    prompt = _prompt_for("review-analyzer")
+    assert "facts[].kind" in prompt
+    for value in ("completed", "partial", "not_done", "blocked", "observation"):
+        assert value in prompt
+
+
+def test_every_enum_of_a_contract_reaches_the_model() -> None:
+    prompt = _prompt_for("planning-advisor")
+    for where in ("ambition.verdict", "estimate_comments[].direction", "risks[].severity"):
+        assert where in prompt
+    assert "cannot_tell" in prompt and "looks_long" in prompt and "medium" in prompt
+
+
+def test_a_contract_without_enums_adds_nothing() -> None:
+    """`task-brief` no tiene vocabularios cerrados: no se le cuelga una seccion vacia."""
+    prompt = _prompt_for("task-intake")
+    assert "Estos campos solo admiten" not in prompt
+
+
+def test_the_example_still_closes_the_prompt() -> None:
+    prompt = _prompt_for("review-analyzer")
+    assert "FORMATO OBLIGATORIO" in prompt
+    assert "sigo esperando al director" in prompt
+    assert prompt.rstrip().endswith("vez de inventarlo.")
+
+
+# --- Compatibilidad hacia atras ----------------------------------------------
+
+
+def test_a_skill_with_its_schema_inside_still_works(tmp_path: Path) -> None:
+    """Un despliegue anterior a A06 no tiene CONTRACTS/ y sigue funcionando."""
+    skills = tmp_path / "perfil" / "skills" / "vieja"
+    skills.mkdir(parents=True)
+    (skills / "SKILL.md").write_text(
+        "---\nname: vieja\nversion: 1.0.0\ndescription: con el esquema dentro\n"
+        "modes:\n  - card\n"
+        "output_contract: ejemplo\noutput_contract_version: 1\n"
+        "output_schema:\n"
+        "  type: object\n"
+        "  additionalProperties: false\n"
+        "  required: [contract, contract_version]\n"
+        "  properties:\n"
+        "    contract:\n"
+        "      const: ejemplo\n"
+        "    contract_version:\n"
+        "      const: 1\n"
+        "output_example:\n"
+        "  contract: ejemplo\n"
+        "  contract_version: 1\n"
+        "---\n\ncuerpo\n",
+        encoding="utf-8",
+    )
+    skill = load_profile_skills(tmp_path / "perfil", ("vieja",))[0]
+    assert skill.declares_output_contract is True
+    assert skill.cites_unresolved_contract is False
+    assert skill.output_schema["properties"]["contract"]["const"] == "ejemplo"
+
+
+def test_an_inline_schema_is_not_overwritten_by_the_registry(
+    tmp_path: Path, doc: dict[str, Any]
+) -> None:
+    """Lo que trae su esquema no lo pierde por que exista un registro."""
+    escribir(tmp_path / CONTRACTS_DIRNAME, doc)
+    skills = tmp_path / "perfil" / "skills" / "vieja"
+    skills.mkdir(parents=True)
+    (skills / "SKILL.md").write_text(
+        "---\nname: vieja\nversion: 1.0.0\ndescription: con el esquema dentro\n"
+        "modes:\n  - card\n"
+        "output_contract: ejemplo\noutput_contract_version: 1\n"
+        "output_schema:\n"
+        "  type: object\n"
+        "  additionalProperties: false\n"
+        "  required: [contract]\n"
+        "  properties:\n"
+        "    contract:\n"
+        "      const: ejemplo\n"
+        "---\n\ncuerpo\n",
+        encoding="utf-8",
+    )
+    skill = load_profile_skills(tmp_path / "perfil", ("vieja",))[0]
+    assert "items" not in skill.output_schema["properties"]
+
+
+def test_a_profile_without_contracts_at_all_still_loads(tmp_path: Path) -> None:
+    skills = tmp_path / "perfil" / "skills" / "simple"
+    skills.mkdir(parents=True)
+    (skills / "SKILL.md").write_text(
+        "---\nname: simple\nversion: 1.0.0\ndescription: sin contrato\n"
+        "modes:\n  - card\n---\n\ncuerpo\n",
+        encoding="utf-8",
+    )
+    skill = load_profile_skills(tmp_path / "perfil", ("simple",))[0]
+    assert skill.output_contract is None
+    assert skill.declares_output_contract is False
+
+
+# --- Un contrato necesita un modelo que sepa seguirlo -------------------------
+
+
+def test_every_profile_with_a_contract_demands_a_capable_model() -> None:
+    """Medido, no supuesto.
+
+    Una tarjeta de descomposicion agoto sus tres intentos con `standard`: un
+    modelo pequeno corrompio los nombres de campo a mitad de generacion, otro
+    proveedor no estaba disponible, y el tercero devolvio el prompt entero con
+    un error **no reintentable**. La tarjeta quedo bloqueada sin producir nada.
+    """
+    from agora.broker.contracts import BrokerPolicy
+    from agora.models import ModelCatalog, profile_capacity
+    from agora.profiles import load_profiles
+
+    catalog = ModelCatalog.load(
+        Path(__file__).resolve().parents[1]
+        / "examples"
+        / "f0-demo"
+        / "AGENTS"
+        / "models.yml"
+    )
+    comprobados = 0
+    for profile in load_profiles(PROFILES_ROOT):
+        skills = load_profile_skills(profile.source.parent, profile.skills)
+        if not any(skill.declares_output_contract for skill in skills):
+            continue
+        policy = catalog.policy_for(profile_capacity(profile.metadata), BrokerPolicy())
+        assert policy.target_model is not None, profile.name
+        assert policy.determinism == "strict", profile.name
+        comprobados += 1
+    assert comprobados == 4, f"se esperaban los cuatro perfiles, hay {comprobados}"
+
+
+# --- Un contrato publicado no cambia -----------------------------------------
+
+
+def test_no_published_contract_has_changed_shape(registry: ContractRegistry) -> None:
+    """La promesa de A12, hecha comprobable.
+
+    Quien guardo un artefacto de `work-breakdown@1` tiene derecho a que ese
+    nombre siga significando lo mismo dentro de un ano. Si esta prueba falla, la
+    pregunta no es «como actualizo la huella» sino «esto deberia ser una version
+    nueva?».
+    """
+    from agora.contracts import fingerprint, read_published_lock
+
+    publicados = read_published_lock(PROFILES_ROOT / CONTRACTS_DIRNAME)
+    assert publicados, "el fichero de huellas tiene que existir"
+
+    for contract in registry.catalogue():
+        esperada = publicados.get(contract.reference)
+        assert esperada, (
+            f"{contract.reference} no esta en PUBLISHED.lock: si es nuevo, "
+            "anadelo; si no, alguien le ha cambiado el nombre o la version"
+        )
+        assert fingerprint(contract.schema) == esperada, (
+            f"{contract.reference} ha cambiado de forma. Un contrato publicado "
+            "no se corrige: se publica una version nueva."
+        )
+
+
+def test_the_lock_does_not_name_contracts_that_no_longer_exist(
+    registry: ContractRegistry,
+) -> None:
+    """Retirar un contrato tambien rompe a quien lo usaba: que se vea."""
+    from agora.contracts import read_published_lock
+
+    publicados = read_published_lock(PROFILES_ROOT / CONTRACTS_DIRNAME)
+    vivos = {contract.reference for contract in registry.catalogue()}
+
+    assert set(publicados) == vivos
+
+
+def test_the_fingerprint_ignores_key_order() -> None:
+    """Reordenar un YAML no es un cambio de contrato."""
+    from agora.contracts import fingerprint
+
+    uno = {"type": "object", "additionalProperties": False, "properties": {"a": {}, "b": {}}}
+    otro = {"properties": {"b": {}, "a": {}}, "additionalProperties": False, "type": "object"}
+
+    assert fingerprint(uno) == fingerprint(otro)
+
+
+def test_the_fingerprint_notices_a_real_change() -> None:
+    from agora.contracts import fingerprint
+
+    uno = {"type": "object", "properties": {"a": {"type": "string"}}}
+    otro = {"type": "object", "properties": {"a": {"type": "integer"}}}
+
+    assert fingerprint(uno) != fingerprint(otro)
+
+
+def test_a_malformed_lock_line_is_rejected(tmp_path: Path) -> None:
+    from agora.contracts import PUBLISHED_LOCK, read_published_lock
+
+    (tmp_path / PUBLISHED_LOCK).write_text("solo-una-cosa\n", encoding="utf-8")
+
+    with pytest.raises(ContractError, match="referencia huella"):
+        read_published_lock(tmp_path)
+
+
+def test_a_deployment_without_a_lock_still_loads(tmp_path: Path) -> None:
+    """El candado es una guardia del repositorio, no un requisito de ejecucion."""
+    from agora.contracts import read_published_lock
+
+    assert read_published_lock(tmp_path) == {}

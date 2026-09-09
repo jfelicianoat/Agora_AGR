@@ -260,9 +260,9 @@ No se tocó el perfil para acomodar mi tarjeta; se corrigió la tarjeta.
   ocurrió en 4000 con un documento que necesitaba algo más de la mitad de 8000.
   Un encargo con doce ítems podría volver a rozarlo; entonces el sitio correcto
   sería declararlo por capacidad en `models.yml`.
-- **`task-intake` (A02) y `task-decomposer` (A03) siguen en `standard`**, con la
-  misma fragilidad de enrutado que motivó subir A04 y A05 a `maximum`. Deuda
-  arrastrada de A04 §7.
+- ~~`task-intake` (A02) y `task-decomposer` (A03) siguen en `standard`~~ —
+  **cerrado en A06 §7**, después de que una tarjeta agotara sus tres intentos
+  con tres modelos distintos y quedara bloqueada sin producir nada.
 - **Una tarjeta con un `request` fuera del vocabulario de `handles` se queda
   quieta en `pending` sin decir por qué.** No es un fallo de esta fase, pero se
   topó aquí y es material para A07.

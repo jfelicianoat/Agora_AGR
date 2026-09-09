@@ -18,6 +18,9 @@ antes.
 
 from __future__ import annotations
 
+import hashlib
+import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -28,6 +31,51 @@ from agora.errors import AgoraError
 from agora.output_contract import validate_payload
 
 CONTRACTS_DIRNAME = "CONTRACTS"
+PUBLISHED_LOCK = "PUBLISHED.lock"
+
+#: Vocabulario que pertenece al planificador del cliente y no a Agora.
+#:
+#: La frontera del proyecto es una sola frase: **Agora ejecuta trabajo de IA; el
+#: cliente es dueno de sus tareas, su calendario, su disponibilidad y su
+#: planificador**. Un contrato que trajera un campo `start_date` o `work_block`
+#: la habria cruzado, y lo malo de cruzarla es que se cruza poco a poco: un
+#: campo util aqui, otro alli, y un dia Agora es medio calendario y nadie sabe
+#: quien decide una fecha.
+#:
+#: Se comprueba al cargar, y sobre los **nombres de campo**: describir por que
+#: no se agenda es correcto; tener donde escribirlo, no.
+#:
+#: Palabras que, siendo una palabra entera del nombre, delatan una agenda.
+#: `today_matters` no lo es, y por eso esto se compara por palabras y no por
+#: subcadenas: la primera version lo rechazaba por llevar «day_» dentro.
+CALENDAR_TOKENS: frozenset[str] = frozenset(
+    {
+        "date", "dates",
+        "day", "days",
+        "hour", "hours",
+        "week", "weeks",
+        "slot", "slots",
+        "due",
+        "start", "end", "when",
+    }
+)
+
+#: Palabras que no pueden ser un falso positivo ni partidas por la mitad.
+CALENDAR_WORDS: tuple[str, ...] = (
+    "availability",
+    "calendar",
+    "deadline",
+    "holiday",
+    "pomodoro",
+    "schedul",
+    "timeblock",
+    "vacation",
+    "workblock",
+)
+
+CALENDAR_EXCEPTIONS: frozenset[str] = frozenset(
+    {"estimated_minutes", "total_estimated_minutes", "duration_minutes", "effort_minutes"}
+)
 
 
 class ContractError(AgoraError):
@@ -100,6 +148,34 @@ class ContractRegistry:
         return tuple(
             sorted(self.contracts.values(), key=lambda c: (c.name, c.version))
         )
+
+
+def fingerprint(schema: dict[str, Any]) -> str:
+    """La huella de un esquema, estable frente al orden de las claves.
+
+    Sirve para una sola cosa: comprobar que un contrato ya publicado no ha
+    cambiado de forma. Se ordenan las claves porque reordenar un YAML no es un
+    cambio de contrato, y se compacta porque el espaciado tampoco lo es.
+    """
+    canonical = json.dumps(schema, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def read_published_lock(root: Path) -> dict[str, str]:
+    """Las huellas de los contratos publicados, por `nombre@version`."""
+    path = root / PUBLISHED_LOCK
+    if not path.is_file():
+        return {}
+    published: dict[str, str] = {}
+    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        parts = stripped.split()
+        if len(parts) != 2:
+            raise ContractError(f"{path}:{number}: se esperaba «referencia huella»")
+        published[parts[0]] = parts[1]
+    return published
 
 
 def _load_one(path: Path) -> OutputContract:
@@ -204,6 +280,52 @@ def _check_house_rules(
             raise ContractError(
                 f"{path}: {where} necesita additionalProperties: false"
             )
+
+    for where, field in _walk_field_names(schema, "raiz"):
+        offending = _calendar_word(field)
+        if offending:
+            raise ContractError(
+                f"{path}: {where} es un campo del planificador del cliente "
+                f"(«{offending}»). Agora ejecuta trabajo de IA; las fechas, las "
+                "horas y la disponibilidad son del cliente. Si hace falta hablar "
+                "de esfuerzo, usa minutos estimados, que no son una agenda."
+            )
+
+
+def _calendar_word(field: str) -> str | None:
+    """La palabra de calendario que lleva el nombre de un campo, si lleva alguna.
+
+    Se compara **por palabras**, partiendo el nombre por guiones bajos y por los
+    cambios de caja. Comparar por subcadena rechazaba `today_matters` por llevar
+    «day» dentro, que es exactamente el tipo de falso positivo que hace que una
+    guardia acabe desactivada.
+    """
+    lowered = field.lower()
+    if lowered in CALENDAR_EXCEPTIONS:
+        return None
+    # Sin separadores, para que `work_block` y `workBlock` sean lo mismo que
+    # `workblock`: una guardia que se salta poniendo un guion no guarda nada.
+    squashed = re.sub(r"[^a-z]", "", lowered)
+    offending = next((word for word in CALENDAR_WORDS if word in squashed), None)
+    if offending:
+        return offending
+    tokens = {token for token in re.split(r"[_\s-]+|(?<=[a-z])(?=[A-Z])", field) if token}
+    return next(
+        (token.lower() for token in tokens if token.lower() in CALENDAR_TOKENS), None
+    )
+
+
+def _walk_field_names(node: Any, where: str):
+    """Todos los nombres de campo del esquema, con el sitio donde estan."""
+    if not isinstance(node, dict):
+        return
+    for field, child in (node.get("properties") or {}).items():
+        here = f"{where}.{field}"
+        yield here, str(field)
+        yield from _walk_field_names(child, here)
+    items = node.get("items")
+    if isinstance(items, dict):
+        yield from _walk_field_names(items, f"{where}[]")
 
 
 def _walk_objects(schema: dict[str, Any], where: str):

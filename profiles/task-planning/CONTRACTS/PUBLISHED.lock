@@ -1,0 +1,15 @@
+# Huella de cada contrato publicado.
+#
+# Un contrato publicado NO cambia de forma: quien guardo un artefacto de
+# `work-breakdown@1` tiene derecho a que ese nombre siga significando lo
+# mismo dentro de un ano. Cambiarlo exige una version nueva, no una
+# correccion silenciosa.
+#
+# Si una prueba falla senalando este fichero, la pregunta no es «como
+# actualizo la huella» sino «esto deberia ser una version nueva?».
+# Anadir un contrato si anade una linea; modificar una existente, no.
+
+plan-advice@1 9d826e7943bb8807c3a9bf42f21c77e207de5222e45f845ae0c8438ac1539fd1
+review-analysis@1 46f0f8f5957383677fda2e3d47fc2bb4d9b1d5782600190628b51a5dc4ac520d
+task-brief@1 370dda52541bd4ec59dbbe49e2da1b8515c6bd0fc9d485987b9b74b2c126272b
+work-breakdown@1 177a8ea4e74136f423ff9e4fc686871bf5b5a55b9234cd2f064fc3ca1a82ad8c

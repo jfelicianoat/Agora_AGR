@@ -33,7 +33,7 @@ from agora.profiles import Profile  # noqa: E402
 from agora.skills import load_profile_skills  # noqa: E402
 
 BROKER = "http://192.168.1.52:8765"
-TOKEN = os.environ.get("BROKER_TOKEN", "MkRIjKZxAKN841nTNst5WFGlYdxZJiGr")
+TOKEN = os.environ.get("BROKER_TOKEN", "llt0WeZ0YtPgGm62Y9fhnDvWrDvfoDaZ")
 ROOT = Path(__file__).resolve().parents[1]
 TEMP = Path(os.environ.get("TEMP", "."))
 
