@@ -199,6 +199,68 @@ def test_work_that_went_well_carries_no_error(
     assert "error" not in estado
 
 
+# --- R14: una tarjeta que nadie aqui puede ejecutar no esta «en cola» ---------
+
+
+def _pedir(client: TestClient, recipient: str) -> dict[str, Any]:
+    client.post(
+        "/api/v1/cards",
+        json={**PETICION, "recipient": recipient},
+        headers={"Idempotency-Key": f"k-{recipient}"},
+    )
+    return client.get("/api/v1/cards/encargo.md").json()
+
+
+def test_asking_for_a_major_line_the_board_lacks_is_blocked_not_queued(
+    cliente: tuple[AgoraApplication, TestClient],
+) -> None:
+    """Hallazgo de R14 con el cliente real: antes decia `queued` para siempre."""
+    _, client = cliente
+
+    estado = _pedir(client, "resumidor@9")
+
+    assert estado["state"] == BoardState.PENDING.value  # la verdad no cambia
+    assert estado["status"] == "blocked"
+    assert estado["terminal"] is False
+    assert estado["error"]["code"] == "invalid_recipient"
+    assert "resumidor@9" in estado["error"]["message"]
+
+
+def test_the_right_major_line_is_still_queued(
+    cliente: tuple[AgoraApplication, TestClient],
+) -> None:
+    _, client = cliente
+
+    estado = _pedir(client, "resumidor@1")
+
+    assert estado["status"] == "queued"
+    assert "error" not in estado
+
+
+def test_work_addressed_to_a_person_is_not_an_invalid_recipient(
+    cliente: tuple[AgoraApplication, TestClient],
+) -> None:
+    _, client = cliente
+
+    estado = _pedir(client, "human")
+
+    assert estado["status"] == "queued"
+
+
+def test_installing_the_requested_line_unblocks_it_without_touching_the_card(
+    cliente: tuple[AgoraApplication, TestClient], tmp_path: Path
+) -> None:
+    """No es terminal: si aparece el perfil pedido, la tarjeta vuelve a esperar turno."""
+    _, client = cliente
+    assert _pedir(client, "traductor@1")["status"] == "blocked"
+
+    write_profile(
+        tmp_path / "AGENTS", "traductor", function="transform", handles=["translate text"]
+    )
+
+    assert client.get("/api/v1/cards/encargo.md").json()["status"] == "queued"
+
+
 # --- El estado interno no se pierde ------------------------------------------
 
 

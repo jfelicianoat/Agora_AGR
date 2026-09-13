@@ -99,8 +99,30 @@ Cuando `status` es `failed`, `blocked` o `cancelled`, la respuesta lleva un
 ```
 
 Los códigos son estables y un cliente puede ramificar sobre ellos:
-`attempts_exhausted`, `untrusted_origin`, `cancelled_by_client`, `unknown`. El
-`message` es para una persona y puede cambiar sin avisar.
+`attempts_exhausted`, `untrusted_origin`, `cancelled_by_client`,
+`invalid_recipient`, `unknown`. El `message` es para una persona y puede cambiar
+sin avisar.
+
+### `invalid_recipient` (añadido en R14 de Gestión Tareas IA)
+
+Una tarjeta en `pending` cuyo `recipient` ningún perfil de este tablero puede
+atender —pide una línea mayor que no existe (`task-intake@9` con `task-intake`
+1.x instalado) o un perfil que no hace esa función— se proyecta como
+`status: blocked`, `terminal: false`, `error.code: invalid_recipient`.
+
+Hasta entonces se proyectaba como `queued`, y el cliente la veía «en cola» para
+siempre sin poder distinguirla de un trabajo que espera turno. Se descubrió
+ejecutando el cliente real de Gestión Tareas IA contra este API en un tablero
+temporal (`scripts/integracion_agora_temporal.py` de ese repositorio).
+
+`state` sigue siendo `pending`: la carpeta es la verdad y no se toca. Si se
+instala el perfil pedido, la misma tarjeta vuelve a proyectarse como `queued` y
+se ejecuta sin intervención. Un `recipient` dirigido a una persona (`human`,
+`persona`, `user`) no es un destinatario inválido.
+
+Límite conocido: los eventos (`/api/v1/events`) no se recalculan. El evento
+`card.created` sigue diciendo `queued`; quien necesite saberlo consulta el
+estado de la tarjeta.
 
 **El código se escribe en el momento de bloquear**, no se deduce después leyendo
 el texto. Quien bloquea es quien sabe el motivo; adivinarlo buscando palabras en

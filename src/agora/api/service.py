@@ -20,6 +20,11 @@ from agora.profiles import load_profiles
 from agora.documents import atomic_write_bytes
 from agora.errors import CardFormatError, InvalidTransition
 from agora.harnesses import DeterministicHarness
+from agora.matching import MatchStatus, match_card
+
+#: Destinatarios que significan «esto lo hace una persona». El despachador los
+#: salta antes de emparejar, asi que no son un destinatario invalido.
+_HUMAN_RECIPIENTS = frozenset({"human", "persona", "user"})
 
 
 class RemoteWorkService:
@@ -219,6 +224,21 @@ class RemoteWorkService:
             reason=f"Remote runner yielded: {reason}",
             increment_attempts=increment_attempts,
         )
+
+    def recipient_mismatch(self, filename: str) -> str:
+        """Por que ningun perfil puede ejecutar esta tarjeta pendiente, si es por su destinatario.
+
+        Devuelve el motivo del emparejamiento, o cadena vacia si la tarjeta no
+        fija destinatario, va dirigida a una persona o si empareja. Solo mira
+        el destinatario a proposito: una tarjeta sin destinatario que no
+        empareja por su peticion es otro caso, y sigue en cola como siempre.
+        """
+        path = self.board.directory(BoardState.PENDING) / _plain_card_name(filename)
+        card = Card.load(path)
+        if not card.recipient or card.recipient.strip().lower() in _HUMAN_RECIPIENTS:
+            return ""
+        result = match_card(card, load_profiles(self.application.profiles_root))
+        return result.reason if result.status is MatchStatus.INVALID_RECIPIENT else ""
 
     def unblock(self, filename: str, *, principal: str, reason: str) -> Path:
         return self.board.unblock(filename, actor=principal, reason=reason)

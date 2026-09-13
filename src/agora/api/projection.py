@@ -32,6 +32,7 @@ ErrorCode = Literal[
     "attempts_exhausted",
     "untrusted_origin",
     "cancelled_by_client",
+    "invalid_recipient",
     "unknown",
 ]
 
@@ -70,6 +71,28 @@ def project(state: BoardState, metadata: dict[str, Any]) -> dict[str, Any]:
             "message": _cancel_reason(metadata),
         }
     return projected
+
+
+def project_unmatched_recipient(reason: str) -> dict[str, Any]:
+    """Una tarjeta pendiente que **ningun perfil de este tablero puede ejecutar**.
+
+    Pasa cuando el cliente pide una linea mayor que aqui no existe
+    (`task-intake@9` con `task-intake` 1.x instalado) o un perfil que no hace
+    esa funcion. El despachador la deja en `pending` sin emparejar, y hasta
+    R14 eso se proyectaba como `queued`: el cliente veia «en cola» para siempre
+    y no podia distinguirlo de un trabajo que espera turno. Se comprobo con el
+    cliente real de Gestion Tareas IA contra este API.
+
+    La carpeta no cambia —la verdad del tablero sigue siendo `pending`, y si se
+    instala el perfil pedido la tarjeta se ejecuta sin tocarla—, pero al
+    cliente se le cuenta lo que pasa: esta parada y alguien tiene que decidir.
+    Por eso `blocked` y no terminal.
+    """
+    return {
+        "status": "blocked",
+        "terminal": False,
+        "error": {"code": "invalid_recipient", "message": reason},
+    }
 
 
 def _blocked(metadata: dict[str, Any]) -> dict[str, Any]:

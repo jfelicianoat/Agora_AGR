@@ -20,7 +20,7 @@ from agora.api.contracts import (
     YieldRequest,
 )
 from agora.api.service import RemoteWorkService
-from agora.api.projection import project
+from agora.api.projection import project, project_unmatched_recipient
 from agora.api.storage import EventStore, IdempotencyConflict, IdempotencyStore
 from agora.application import AgoraApplication
 from agora.contracts import ContractRegistry
@@ -156,9 +156,16 @@ def create_api(application: AgoraApplication, settings: ApiSettings) -> FastAPI:
         """
         state_name, payload = remote.locate(filename)
         metadata = payload.get("metadata")
+        proyeccion = project(state_name, metadata if isinstance(metadata, dict) else {})
+        if state_name is BoardState.PENDING:
+            # En cola solo si alguien puede ejecutarla. Una que pide un perfil o
+            # una linea mayor que aqui no hay no espera turno: esta parada.
+            motivo = remote.recipient_mismatch(filename)
+            if motivo:
+                proyeccion = project_unmatched_recipient(motivo)
         return {
             "state": state_name.value,
-            **project(state_name, metadata if isinstance(metadata, dict) else {}),
+            **proyeccion,
             **payload,
         }
 
