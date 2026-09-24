@@ -111,16 +111,28 @@ class AiRunner:
         card = Card.parse(work.card_document, source=f"claimed CARD {work.filename}")
         remote = card.metadata.get("remote")
         task_id = remote.get("task_id") if isinstance(remote, dict) else None
-        if isinstance(task_id, str) and task_id:
-            claimed_at = _timestamp(card.metadata.get("claimed"))
-            current = (now or datetime.now(UTC)).astimezone(UTC)
-            if claimed_at is not None:
-                age = (current - claimed_at).total_seconds()
-                zombie_after = self.executor.policy_for_profile_name(
-                    work.profile
-                ).zombie_timeout_seconds
-                if age > zombie_after:
+        # La edad se mira **antes** de preguntar por el `task_id`, y no dentro de
+        # su rama. Una tarjeta reclamada hace horas sin `task_id` no esta «sin
+        # empezar»: esta abandonada. Ese es justo el caso que se quedaba vivo
+        # para siempre —el runner muere entre el `claim` y el `submit`, que es
+        # cuando aun no hay nada que apuntar—, porque exigir `task_id` para
+        # comprobar la edad es exigir que el fallo ocurriera despues del unico
+        # momento en que no puede comprobarse. Ver
+        # `docs/HALLAZGO_20260919_TARJETA_HUERFANA.md`.
+        claimed_at = _timestamp(card.metadata.get("claimed"))
+        current = (now or datetime.now(UTC)).astimezone(UTC)
+        if claimed_at is not None:
+            age = (current - claimed_at).total_seconds()
+            zombie_after = self.executor.policy_for_profile_name(
+                work.profile
+            ).zombie_timeout_seconds
+            if age > zombie_after:
+                if isinstance(task_id, str) and task_id:
                     return self._cancel_zombie(work, task_id)
+                # Sin `task_id` no hay nada que cancelar en el broker —no llego
+                # a enviarse—, asi que basta con soltarla gastando intento.
+                return self._yield_abandoned(work, age)
+        if isinstance(task_id, str) and task_id:
             try:
                 execution = self.executor.resume(work, task_id)
             except (BrokerTaskFailed, BrokerPolicyViolation) as exc:
@@ -218,6 +230,28 @@ class AiRunner:
         except (httpx.HTTPError, BrokerApiError, AgoraApiError) as exc:
             return RunnerOutcome(status="failed", card=work.filename, detail=str(exc))
         return RunnerOutcome(status="failed", card=work.filename, detail="zombie cancelled")
+
+    def _yield_abandoned(self, work: WorkItem, age: float) -> RunnerOutcome:
+        """Suelta una tarjeta reclamada y nunca enviada, gastando intento.
+
+        Gasta intento a proposito: a los tres acaba en `blocked`, que es donde
+        decide una persona. Soltarla sin contar convertiria un cuelgue en un
+        bucle que ademas paga invocaciones al broker.
+        """
+        try:
+            self.agora.yield_card(
+                work.filename,
+                runner_id=self.runner_id,
+                reason=(
+                    f"Claimed {age:.0f}s ago and never submitted to the AI_Broker; "
+                    "released for redispatch."
+                ),
+                increment_attempts=True,
+                idempotency_key=f"{_attempt_prefix(self.runner_id, work)}:abandoned",
+            )
+        except (httpx.HTTPError, AgoraApiError) as exc:
+            return RunnerOutcome(status="failed", card=work.filename, detail=str(exc))
+        return RunnerOutcome(status="failed", card=work.filename, detail="abandoned claim released")
 
     def _yield_unsupported(self, work: WorkItem, reason: str) -> RunnerOutcome:
         try:

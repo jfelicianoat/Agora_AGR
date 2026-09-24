@@ -104,6 +104,13 @@ class RemoteWorkService:
             max_dispatches_per_round=1_000_000,
             trusted_origins=self.application.trusted_origins,
         )
+        # El barrido va **de verdad**, aunque el reparto se simule. Aqui el
+        # `dry_run` no significa «ensayo»: significa que reparte el runner, no
+        # el tablero. Esta llamada es el unico latido continuo del despliegue
+        # real, asi que si el rescate se simulara tambien, no rescataria nunca a
+        # nadie —que es justo como se quedo `job-ca559a4b560b.md` nueve horas y
+        # media—. Ver `docs/HALLAZGO_20260919_TARJETA_HUERFANA.md`.
+        dispatcher.sweep_abandoned()
         outcomes = dispatcher.run_once(dry_run=True)
         items: list[WorkItem] = []
         for outcome in outcomes:

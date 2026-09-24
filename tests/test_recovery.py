@@ -381,6 +381,62 @@ def test_the_zombie_threshold_comes_from_the_profile_policy(tmp_path: Path) -> N
     assert fake.cancelled == []
 
 
+def _claim_without_task(application: Any, *, when: datetime) -> None:
+    """Reclamada y **sin** `task_id`: el runner murio antes de enviar nada.
+
+    Es la ventana de `executor.py`, donde el `task_id` se apunta despues del
+    `submit()`. Todo lo anterior —el contrato, que es red; las skills, que son
+    disco; los adjuntos; el propio envio— puede colgarse ahi.
+    """
+    create_card(application.board)
+    claimed = application.board.claim("task.md", "ai-runner", when=when)
+    card = Card.load(claimed)
+    card.metadata["profile"] = "summarizer"
+    card.save()
+
+
+def test_a_claim_that_never_reached_the_broker_still_ages_out(tmp_path: Path) -> None:
+    """La caducidad no puede vivir dentro de la rama del `task_id`.
+
+    Vivia ahi, y por eso una tarjeta reclamada por un runner que murio antes de
+    `submit()` se quedaba `in-progress` con `attempts: 0` para siempre. Visto en
+    vivo el 19-09-2026: nueve horas y media.
+    Ver `docs/HALLAZGO_20260919_TARJETA_HUERFANA.md`.
+    """
+    fake = FakeBroker()
+    application, runner = _runner(tmp_path, fake)
+    viejo = datetime(2026, 9, 1, 12, tzinfo=UTC)
+    _claim_without_task(application, when=viejo)
+    work = runner.agora.claimed("ai-runner")[0]
+
+    outcome = runner._recover(work, now=viejo + timedelta(hours=99))
+
+    assert outcome.detail == "abandoned claim released"
+    # Gasta intento: a los tres acaba en `blocked`, donde decide una persona.
+    assert Card.load(application.board.directory(BoardState.PENDING) / "task.md").attempts == 1
+    # Y no se paga nada por rescatarla: nunca hubo tarea que cancelar.
+    assert fake.submissions == []
+    assert fake.cancelled == []
+
+
+def test_a_fresh_claim_without_task_id_is_executed_not_released(tmp_path: Path) -> None:
+    """El arreglo no puede llevarse por delante el arranque normal.
+
+    Entre reclamar y enviar hay un hueco legitimo de segundos; soltar ahi seria
+    cambiar una tarjeta huerfana por trabajo perdido en cada latido.
+    """
+    fake = FakeBroker()
+    application, runner = _runner(tmp_path, fake)
+    ahora = datetime(2026, 9, 1, 12, tzinfo=UTC)
+    _claim_without_task(application, when=ahora)
+    work = runner.agora.claimed("ai-runner")[0]
+
+    outcome = runner._recover(work, now=ahora + timedelta(seconds=1))
+
+    assert outcome.detail != "abandoned claim released"
+    assert fake.submissions
+
+
 # --- Lo que el cliente ve de todo esto ---------------------------------------
 
 

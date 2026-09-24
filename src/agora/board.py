@@ -302,7 +302,15 @@ class Board:
         now: datetime | None = None,
         threshold: timedelta,
         actor: str = "dispatcher",
+        dry_run: bool = False,
     ) -> tuple[RecoveryAction, ...]:
+        """Devuelve a pendientes lo reclamado hace mas de `threshold`.
+
+        Con `dry_run` informa de lo que rescataria y **no escribe nada**. Existe
+        para que quien la llame no tenga que reimplementar el calculo de edad
+        para su modo de prueba: esa copia acabaria divergiendo de esta, que es
+        la que decide de verdad.
+        """
         current = (now or utc_now()).astimezone(UTC)
         actions: list[RecoveryAction] = []
         for path in self.paths(BoardState.IN_PROGRESS):
@@ -316,6 +324,22 @@ class Board:
             if claimed is None or current - claimed <= threshold:
                 continue
             attempts = card.attempts + 1
+            if dry_run:
+                # El mismo criterio que aplica `return_pending` al volver:
+                # agotados los intentos, la CARD no vuelve a pendientes.
+                actions.append(
+                    RecoveryAction(
+                        path.name,
+                        (
+                            BoardState.BLOCKED
+                            if attempts >= card.max_attempts
+                            else BoardState.PENDING
+                        ),
+                        attempts,
+                        "zombie timeout",
+                    )
+                )
+                continue
             destination = self.return_pending(
                 path,
                 actor=actor,

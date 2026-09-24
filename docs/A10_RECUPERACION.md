@@ -193,7 +193,11 @@ el escenario que ningún doble podía reproducir.
 - **El runner del PC de IA sigue en Agora 0.2.2.** Todo lo de A07 a A10 es del
   lado del tablero, así que funciona; pero la distancia entre las dos piezas ya
   es de cuatro versiones. Conviene igualarlas en la próxima visita al PC de IA.
-- **No se ha probado el runner muriendo a mitad contra el sistema real** (§8).
+- ~~**No se ha probado el runner muriendo a mitad contra el sistema real** (§8).~~
+  Ejecutado el 19-09-2026, y hacía falta: el escenario ocurrió de verdad y dejó
+  una tarjeta irrecuperable. Ver
+  [HALLAZGO_20260919_TARJETA_HUERFANA.md](HALLAZGO_20260919_TARJETA_HUERFANA.md)
+  §9, con lo que ese montaje no llega a probar (§9.4).
 - **`ProfileSummary.source` sigue exponiendo una ruta del sistema de ficheros.**
   Deuda abierta desde A07 §9; el sitio es A12.
 - **Un `blocked` no vuelve solo.** Es deliberado —hace falta una decisión
