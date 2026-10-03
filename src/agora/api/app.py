@@ -19,13 +19,13 @@ from agora.api.contracts import (
     WorkItem,
     YieldRequest,
 )
-from agora.api.service import RemoteWorkService
 from agora.api.projection import project, project_unmatched_recipient
+from agora.api.service import RemoteWorkService
 from agora.api.storage import EventStore, IdempotencyConflict, IdempotencyStore
 from agora.application import AgoraApplication
-from agora.contracts import ContractRegistry
 from agora.board import BoardState
 from agora.cards import Card
+from agora.contracts import ContractRegistry
 from agora.errors import AgoraError, CardFormatError, ClaimConflict, InvalidTransition
 from agora.security.fastapi import ALL_AGORA_SCOPES, BearerAuthenticator, install_oauth_endpoints
 from agora.security.oauth import OAuthAuthority, OAuthPrincipal
@@ -285,6 +285,8 @@ def create_api(application: AgoraApplication, settings: ApiSettings) -> FastAPI:
     ) -> JSONResponse:
         key = _required_key(idempotency_key)
         body = request.model_dump(mode="json")
+        if request.review_context is None:
+            body.pop("review_context")
         digest = idempotency.digest(body)
         with operation_lock:
             cached = idempotency.lookup("create", key, digest)
@@ -333,10 +335,13 @@ def create_api(application: AgoraApplication, settings: ApiSettings) -> FastAPI:
         _principal: BoardClaim,
         idempotency_key: IdempotencyKey = None,
     ) -> JSONResponse:
+        body = request.model_dump(mode="json")
+        if request.review_gate_audit is None:
+            body.pop("review_gate_audit")
         return _mutation(
             "progress",
             filename,
-            request.model_dump(mode="json"),
+            body,
             idempotency_key,
             operation_lock,
             idempotency,
@@ -346,6 +351,7 @@ def create_api(application: AgoraApplication, settings: ApiSettings) -> FastAPI:
                 request.runner_id,
                 request.milestones,
                 request.checkpoint,
+                request.review_gate_audit,
             ),
             BoardState.IN_PROGRESS,
             "card.progressed",

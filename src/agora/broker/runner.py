@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import base64
+import hashlib
+import json
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import httpx
 
@@ -21,6 +24,7 @@ from agora.broker.executor import (
     BrokerPolicyViolation,
     BrokerTaskFailed,
 )
+from agora.broker.review_gate import audit_milestone
 from agora.cards import Card
 from agora.documents import atomic_write_bytes
 from agora.remote.client import AgoraApiClient, AgoraApiError
@@ -173,8 +177,22 @@ class AiRunner:
                 idempotency_key=f"{attempt}:checkpoint",
             )
 
+        def review_checkpoint(audit: dict[str, Any]) -> None:
+            digest = hashlib.sha256(
+                json.dumps(audit, sort_keys=True).encode("utf-8")
+            ).hexdigest()
+            self.agora.progress(
+                work.filename,
+                runner_id=self.runner_id,
+                milestones=[audit_milestone(audit)],
+                review_gate_audit=audit,
+                idempotency_key=f"{attempt}:review-gate:{digest}",
+            )
+
         try:
-            execution = self.executor.execute(work, attachments, checkpoint=checkpoint)
+            execution = self.executor.execute(
+                work, attachments, checkpoint=checkpoint, review_checkpoint=review_checkpoint
+            )
         except BrokerContractUnsupported as exc:
             # No es culpa de la tarjeta: devolverla sin gastar intento para que
             # otro runner —o este mismo tras actualizar el broker— la recoja.

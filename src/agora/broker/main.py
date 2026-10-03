@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 import time
@@ -20,6 +21,7 @@ from agora.broker.credentials import (
 )
 from agora.broker.executor import BrokerExecutor
 from agora.broker.preflight import report, run_preflight
+from agora.broker.review_gate import ReviewGate, ReviewGateConfig
 from agora.broker.runner import AiRunner
 from agora.broker.supervisor import BrokerSupervisor
 from agora.models import ModelCatalog
@@ -63,6 +65,10 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--broker-config", type=Path, help=supervise_only)
     parser.add_argument("--broker-python", type=Path, default=Path(sys.executable))
     parser.add_argument("--poll-seconds", type=float, default=15.0)
+    parser.add_argument(
+        "--review-gate-config", type=Path,
+        help="configuración YAML del gate System-1 para tarjetas de revisión de resultados",
+    )
     parser.add_argument("--once", action="store_true")
     parser.add_argument(
         "--check",
@@ -98,6 +104,10 @@ def _supervisor(args: argparse.Namespace) -> BrokerSupervisor:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    review_config = (
+        ReviewGateConfig.load(args.review_gate_config)
+        if args.review_gate_config is not None else ReviewGateConfig()
+    )
     print(f"Agora AI runner {__version__} (runner-id {args.runner_id})", file=sys.stderr)
     agora_token = os.environ.get(args.token_env)
     if not agora_token:
@@ -157,7 +167,8 @@ def main(argv: list[str] | None = None) -> int:
             if supervisor is not None:
                 supervisor.stop()
             return report(checks)
-        executor = BrokerExecutor(broker, profiles_root, policy, catalog=catalog)
+        gate = ReviewGate(review_config)
+        executor = BrokerExecutor(broker, profiles_root, policy, catalog=catalog, review_gate=gate)
         runner = AiRunner(
             agora,
             broker,
@@ -175,6 +186,9 @@ def main(argv: list[str] | None = None) -> int:
                     runner.executor.client = replacement
                 outcome = runner.run_once()
                 print(outcome.model_dump_json())
+                if review_config.enabled:
+                    print("Review gate metrics: " + json.dumps(gate.metrics.snapshot()),
+                          file=sys.stderr)
                 if args.once:
                     return 0 if outcome.status in {"completed", "idle"} else 1
                 time.sleep(max(0.1, args.poll_seconds))

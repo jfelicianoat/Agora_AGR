@@ -1,0 +1,7 @@
+{
+  "scope": "src and tests, strict project configuration",
+  "suppressed": "import-untyped: PyYAML stubs unavailable in the installed interpreter",
+  "baseline_error_count": 93,
+  "current_error_count": 93,
+  "new_errors": {}
+}

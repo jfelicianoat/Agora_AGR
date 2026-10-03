@@ -4,11 +4,35 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+
+class ReviewVerification(StrictModel):
+    name: str = Field(min_length=1, max_length=200)
+    status: Literal["passed", "failed", "missing"]
+    required: StrictBool = True
+
+
+class ReviewContext(StrictModel):
+    """Explicit result-review input, separate from personal review analysis."""
+
+    goal: str = Field(min_length=1, max_length=20_000)
+    task_type: str = Field(min_length=1, max_length=128)
+    acceptance_criteria: list[str] = Field(min_length=1, max_length=100)
+    agent_output: str = Field(min_length=1, max_length=100_000)
+    verifications: list[ReviewVerification] = Field(default_factory=list, max_length=100)
+    evidence: dict[str, str] = Field(default_factory=dict)
+    required_evidence: list[str] = Field(default_factory=list, max_length=100)
+    mandatory_review: StrictBool = False
+    explicit_review_requested: StrictBool = False
+    sensitive: StrictBool = False
+    destructive: StrictBool = False
+    publication_requires_review: StrictBool = False
+    deployment_requires_review: StrictBool = False
 
 
 class ExternalReference(StrictModel):
@@ -48,6 +72,7 @@ class CreateCardRequest(StrictModel):
     max_attempts: int = Field(default=3, ge=1, le=100)
     body: str = Field(default="", max_length=100_000)
     external_reference: ExternalReference | None = None
+    review_context: ReviewContext | None = None
 
 
 class ClaimRequest(StrictModel):
@@ -59,6 +84,7 @@ class ProgressRequest(StrictModel):
     runner_id: str = Field(min_length=1, max_length=120)
     milestones: list[str] = Field(min_length=1, max_length=100)
     checkpoint: dict[str, str] | None = None
+    review_gate_audit: dict[str, Any] | None = None
 
 
 class RemoteArtifact(StrictModel):

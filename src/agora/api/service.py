@@ -16,11 +16,11 @@ from agora.application import AgoraApplication
 from agora.board import BoardState
 from agora.cards import Card
 from agora.dispatcher import Dispatcher, DispatchStatus
-from agora.profiles import load_profiles
 from agora.documents import atomic_write_bytes
 from agora.errors import CardFormatError, InvalidTransition
 from agora.harnesses import DeterministicHarness
 from agora.matching import MatchStatus, match_card
+from agora.profiles import load_profiles
 
 #: Destinatarios que significan «esto lo hace una persona». El despachador los
 #: salta antes de emparejar, asi que no son un destinatario invalido.
@@ -51,6 +51,8 @@ class RemoteWorkService:
             ),
         )
         card.metadata["origin_identity"] = principal
+        if request.review_context is not None:
+            card.metadata["review_context"] = request.review_context.model_dump(mode="json")
         card.append_record("agora-api", [f"CARD accepted from authenticated client {principal}."])
         return self.board.create(request.filename, card)
 
@@ -173,6 +175,7 @@ class RemoteWorkService:
         runner_id: str,
         milestones: list[str],
         checkpoint: dict[str, str] | None = None,
+        review_gate_audit: dict[str, Any] | None = None,
     ) -> Path:
         path = self._owned_claim(filename, runner_id)
         if checkpoint is not None:
@@ -182,9 +185,12 @@ class RemoteWorkService:
             ):
                 raise InvalidTransition("remote checkpoint has invalid fields")
         self.board.progress(path, runner_id, milestones)
-        if checkpoint is not None:
+        if checkpoint is not None or review_gate_audit is not None:
             card = Card.load(path)
-            card.metadata["remote"] = dict(checkpoint)
+            if checkpoint is not None:
+                card.metadata["remote"] = dict(checkpoint)
+            if review_gate_audit is not None:
+                card.metadata["review_gate"] = dict(review_gate_audit)
             card.save(path)
         return path
 
@@ -208,6 +214,9 @@ class RemoteWorkService:
         if request.execution_audit is not None:
             card = Card.load(claimed)
             card.metadata["execution"] = request.execution_audit
+            gate_audit = request.execution_audit.get("review_gate")
+            if isinstance(gate_audit, dict):
+                card.metadata["review_gate"] = dict(gate_audit)
             card.save(claimed)
         return self.board.close(
             claimed,

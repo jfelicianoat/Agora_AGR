@@ -39,6 +39,11 @@ Para el PC IA, copia `distgora-runner-<version>.zip` y sigue
 
 ## F0 development
 
+Para tarjetas explícitas de revisión de resultados, el AI Runner puede usar
+System-1 a través del AI_Broker. La función requiere configuración explícita,
+está deshabilitada por defecto y comienza en modo sombra. Véase
+[la guía y el benchmark](docs/SYSTEM1_REVIEW_GATE.md).
+
 ```powershell
 python -m pip install -e ".[dev]"
 python -m pytest

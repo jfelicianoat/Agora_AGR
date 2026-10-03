@@ -1,4 +1,4 @@
-"""Loopback-only client for AI_Broker contract 2.9."""
+"""Loopback-only client for AI_Broker, including System-1 contract 2.11."""
 
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ from agora.broker.contracts import (
     BrokerFileState,
     BrokerInvocation,
     BrokerTaskState,
+    System1Judgment,
     validate_capabilities,
 )
 
@@ -69,6 +70,36 @@ class BrokerClient:
     def contract(self) -> BrokerCapabilities:
         """Lo que promete el broker en marcha ahora mismo, validado."""
         return validate_capabilities(self._request("GET", "/api/v1/capabilities"))
+
+    def judge_system1(
+        self,
+        *,
+        use_case: str,
+        inputs: dict[str, Any],
+        instructions: str,
+        timeout_seconds: float = 75.0,
+    ) -> System1Judgment:
+        """One synchronous binary judgment; no task creation, polling or retries.
+
+        Provider order belongs to the broker. Keep the content local, regardless
+        of the generation policy used for the separate reviewer task.
+        """
+        payload = self._request(
+            "POST",
+            "/api/v1/system1/judge",
+            json={
+                "use_case": use_case,
+                "input": inputs,
+                "decision_type": "binary",
+                "instructions": instructions,
+                "cloud_allowed": False,
+            },
+            timeout=timeout_seconds,
+        )
+        judgment = System1Judgment.model_validate(payload)
+        if judgment.use_case != use_case:
+            raise ValueError("System-1 response use_case differs from request")
+        return judgment
 
     def upload_file(self, path: Path) -> BrokerFileState:
         with path.open("rb") as stream:

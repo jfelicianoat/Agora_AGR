@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -19,10 +19,11 @@ from agora.broker.contracts import (
     BrokerTaskState,
 )
 from agora.broker.request_builder import build_broker_request
+from agora.broker.review_gate import ReviewGate, audit_milestone
 from agora.cards import Card
 from agora.models import ModelCatalog, profile_capacity
-from agora.profiles import Profile, load_profiles
 from agora.output_contract import OutputContractError, enforce
+from agora.profiles import Profile, load_profiles
 from agora.skills import Skill, load_profile_skills
 
 
@@ -134,7 +135,7 @@ class BrokerPolicyViolation(RuntimeError):
 
 @dataclass(frozen=True, slots=True)
 class BrokerExecution:
-    task_id: str
+    task_id: str | None
     artifacts: dict[str, bytes]
     model: str | None
     audit: dict[str, Any]
@@ -149,6 +150,7 @@ class BrokerExecutor:
     # Traduce el `model_capacity` del PROFILE a política. Sin catálogo, todos
     # los perfiles comparten `policy`, que es como se comportaba antes.
     catalog: ModelCatalog | None = None
+    review_gate: ReviewGate = field(default_factory=ReviewGate)
 
     def policy_for(self, profile: Profile) -> BrokerPolicy:
         if self.catalog is None:
@@ -208,6 +210,7 @@ class BrokerExecutor:
         attachments: tuple[dict[str, Any], ...],
         *,
         checkpoint: Callable[[str, str], None],
+        review_checkpoint: Callable[[dict[str, Any]], None] | None = None,
     ) -> BrokerExecution:
         card, profile = self._contracts(work)
         policy = self.policy_for(profile)
@@ -222,6 +225,15 @@ class BrokerExecutor:
         # validaria. Se aplica despues de `ensure_supports` porque no cambia
         # nada que el contrato del broker tenga que prometer.
         policy = apply_skill_output_contract(policy, skills)
+        gate_audit = self.review_gate.evaluate(
+            self.client, card, profile, policy, contract,
+            has_attachments=bool(attachments or work.inputs),
+        )
+        if gate_audit is not None:
+            if review_checkpoint is not None:
+                review_checkpoint(gate_audit)
+            if gate_audit["reviewer_skipped"]:
+                return _autoapproved_review(gate_audit, policy)
         payload = build_broker_request(
             profile,
             skills,
@@ -233,14 +245,25 @@ class BrokerExecutor:
         )
         task_id = self.client.submit(payload)
         checkpoint(task_id, key)
+        if gate_audit is not None:
+            self.review_gate.reviewer_submitted(gate_audit, task_id)
+            if review_checkpoint is not None:
+                review_checkpoint(gate_audit)
         state = self.client.wait_task(task_id, timeout_seconds=policy.timeout_seconds)
-        return self.finalize(state, contract=contract, policy=policy)
+        return self.finalize(state, contract=contract, policy=policy, gate_audit=gate_audit)
 
     def resume(self, work: WorkItem, task_id: str) -> BrokerExecution:
-        _card, profile = self._contracts(work)
+        card, profile = self._contracts(work)
         policy = self.policy_for(profile)
+        gate_audit = card.metadata.get("review_gate")
+        if isinstance(gate_audit, dict) and gate_audit.get("enabled") is True:
+            skills = load_profile_skills(profile.source.parent, profile.skills)
+            policy = apply_skill_output_contract(policy, skills)
         state = self.client.wait_task(task_id, timeout_seconds=policy.timeout_seconds)
-        return self.finalize(state, policy=policy)
+        return self.finalize(
+            state, policy=policy,
+            gate_audit=gate_audit if isinstance(gate_audit, dict) else None,
+        )
 
     def finalize(
         self,
@@ -248,6 +271,7 @@ class BrokerExecutor:
         *,
         contract: BrokerCapabilities | None = None,
         policy: BrokerPolicy | None = None,
+        gate_audit: dict[str, Any] | None = None,
     ) -> BrokerExecution:
         if state.status != "completed":
             raise BrokerTaskFailed(state)
@@ -264,6 +288,12 @@ class BrokerExecutor:
         audit = _audit(
             state, invocations, effective_policy, compression, deliverable, determinism
         )
+        if gate_audit is not None:
+            self.review_gate.reviewer_completed(gate_audit, state.task_id, invoked=bool(billable))
+            self.review_gate.compare_shadow(
+                gate_audit, artifacts[deliverable["name"]], state.task_id
+            )
+            audit["review_gate"] = gate_audit
         model = _model_label(audit.get("served_by"))
         milestones: tuple[str, ...] = (
             f"AI_Broker task completed: {state.task_id}.",
@@ -280,6 +310,8 @@ class BrokerExecutor:
             milestones += (
                 f"Contractual invocations with their own generation parameters: {roles}.",
             )
+        if gate_audit is not None:
+            milestones += (audit_milestone(gate_audit),)
         return BrokerExecution(state.task_id, artifacts, model, audit, milestones)
 
     def _collect_artifacts(
@@ -357,6 +389,28 @@ class BrokerExecutor:
         if profile.function.strip().lower() != card.function.strip().lower():
             raise ValueError("local PROFILE function differs from CARD")
         return card, profile
+
+
+def _autoapproved_review(gate_audit: dict[str, Any], policy: BrokerPolicy) -> BrokerExecution:
+    """A recorded approval, with no invented Broker task or generative invocation."""
+    document: dict[str, Any] = {"approved": True}
+    if policy.output_schema is None:
+        document["review_gate"] = gate_audit
+    payload = json.dumps(document, ensure_ascii=False, indent=2).encode("utf-8")
+    name = "review-approval.json"
+    audit: dict[str, Any] = {
+        "task_id": None,
+        "served_by": None,
+        "total_cost_usd": None,  # System-1 does not report cost.
+        "invocations": [],
+        "review_gate": gate_audit,
+        "deliverable": {
+            "name": name, "source": "review_gate",
+            "sha256": hashlib.sha256(payload).hexdigest(),
+        },
+    }
+    artifacts = _enforce_output_contract({name: payload}, audit["deliverable"], policy)
+    return BrokerExecution(None, artifacts, None, audit, (audit_milestone(gate_audit),))
 
 
 def broker_idempotency_key(work: WorkItem) -> str:

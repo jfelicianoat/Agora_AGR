@@ -1,15 +1,63 @@
-"""Stable Agora-side view of the AI_Broker contract (2.9 mínimo, 2.10 preferido)."""
+"""Agora-side AI_Broker contract: 2.9 minimum, additive System-1 support in 2.11."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
 
 
 class BrokerModel(BaseModel):
     model_config = ConfigDict(extra="allow")
+
+
+class System1Attempt(BrokerModel):
+    provider: str = Field(min_length=1)
+    model: str | None = None
+    latency_ms: float = Field(ge=0, allow_inf_nan=False, strict=True)
+    reason_code: str | None = None
+    tokens_input: int | None = Field(default=None, ge=0, strict=True)
+    tokens_output: int | None = Field(default=None, ge=0, strict=True)
+
+
+class System1Alternative(BrokerModel):
+    value: StrictBool
+    confidence: float = Field(ge=0, le=1, allow_inf_nan=False, strict=True)
+
+
+class System1Judgment(BrokerModel):
+    """Binary judgments only: a score decision is an ordinal, not confidence."""
+
+    use_case: str = Field(min_length=1, max_length=128)
+    accepted: StrictBool
+    decision: StrictBool | None
+    confidence: float | None = Field(ge=0, le=1, allow_inf_nan=False, strict=True)
+    confidence_is_calibrated: StrictBool
+    alternatives: list[System1Alternative]
+    provider: str | None
+    model: str | None = None
+    latency_ms: float = Field(ge=0, allow_inf_nan=False, strict=True)
+    fallback_used: StrictBool
+    reason_code: str | None = None
+    attempts: list[System1Attempt]
+
+    @model_validator(mode="after")
+    def validate_binary(self) -> System1Judgment:
+        if self.accepted:
+            if self.decision is None or self.confidence is None or not self.provider:
+                raise ValueError("accepted binary judgment requires decision, confidence, provider")
+            if len(self.alternatives) != 1 or self.alternatives[0].value == self.decision:
+                raise ValueError("binary judgment requires the opposite alternative")
+            if self.alternatives[0].confidence > self.confidence:
+                raise ValueError("binary decision must be the highest-confidence alternative")
+            if not self.attempts or self.attempts[-1].provider != self.provider:
+                raise ValueError("accepted provider must match the last attempt")
+            if self.attempts[-1].reason_code is not None:
+                raise ValueError("accepted attempt must not report a failure")
+        elif self.decision is not None or self.confidence is not None:
+            raise ValueError("rejected judgment must not contain a decision or confidence")
+        return self
 
 
 class BrokerFileState(BrokerModel):
@@ -170,6 +218,14 @@ class BrokerCapabilities:
 
     version: tuple[int, ...]
     raw: dict[str, Any]
+
+    @property
+    def system1_judgments(self) -> bool:
+        return self.raw.get("system1_judgments") is True
+
+    @property
+    def system1_semantic_routing(self) -> bool:
+        return self.raw.get("system1_semantic_routing") is True
 
     @property
     def invocation_contract(self) -> bool:

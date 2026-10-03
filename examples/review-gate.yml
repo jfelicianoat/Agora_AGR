@@ -1,0 +1,12 @@
+# Opt-in: add the names of existing RESULT reviewer profiles in your deployment.
+# The bundled personal review-analyzer is not a result reviewer.
+enabled: false
+shadow_mode: true
+reviewer_profiles: []
+task_types: []
+threshold: 0.97
+thresholds_by_task_type: {}
+timeout_seconds: 75.0
+uncalibrated_policy: review
+use_case: agora_review_gate
+reviewer_verdict_field: null

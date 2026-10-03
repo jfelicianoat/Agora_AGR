@@ -139,16 +139,20 @@ class AgoraApiClient:
         milestones: list[str],
         idempotency_key: str,
         checkpoint: dict[str, str] | None = None,
+        review_gate_audit: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "runner_id": runner_id,
+            "milestones": milestones,
+            "checkpoint": checkpoint,
+        }
+        if review_gate_audit is not None:
+            payload["review_gate_audit"] = review_gate_audit
         return _as_object(
             self._request(
                 "POST",
             f"/api/v1/cards/{_plain_name(filename)}/progress",
-            json={
-                "runner_id": runner_id,
-                "milestones": milestones,
-                "checkpoint": checkpoint,
-            },
+            json=payload,
             headers={"Idempotency-Key": idempotency_key},
             )
         )
