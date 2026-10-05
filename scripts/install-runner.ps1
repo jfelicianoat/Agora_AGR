@@ -64,15 +64,24 @@ function Invoke-Native {
 function Write-Step($message) { Write-Host "`n== $message" -ForegroundColor Cyan }
 function Write-Ok($message) { Write-Host "   $message" -ForegroundColor Green }
 
+# Ordenar por nombre pone '0.2.9' por delante de '0.2.11' (el 9 gana al 1) y
+# elegiria el wheel viejo. Se ordena por la version que lleva el nombre.
+function Get-WheelVersion {
+    param([Parameter(Mandatory = $true)][System.IO.FileInfo]$File)
+    $parsed = $null
+    if ([version]::TryParse(($File.BaseName -split '-')[1], [ref]$parsed)) { return $parsed }
+    return [version]'0.0'
+}
+
 # --- 1. Localizar el paquete -------------------------------------------------
 
 Write-Step 'Localizando el paquete de Agora'
 if (-not $Wheel) {
     $candidate = Get-ChildItem -Path $PSScriptRoot -Filter 'agora_atomic_work-*.whl' -ErrorAction SilentlyContinue |
-        Sort-Object Name -Descending | Select-Object -First 1
+        Sort-Object { Get-WheelVersion $_ } -Descending | Select-Object -First 1
     if (-not $candidate) {
         $candidate = Get-ChildItem -Path (Join-Path $PSScriptRoot '..\dist') -Filter 'agora_atomic_work-*.whl' -ErrorAction SilentlyContinue |
-            Sort-Object Name -Descending | Select-Object -First 1
+            Sort-Object { Get-WheelVersion $_ } -Descending | Select-Object -First 1
     }
     if (-not $candidate) {
         throw "No encuentro ningun .whl de Agora. Pasa -Wheel <ruta> o copia el wheel junto a este script."

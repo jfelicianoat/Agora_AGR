@@ -38,14 +38,15 @@ class System1Broker(FakeBroker):
             "confidence": 0.99,
             "confidence_is_calibrated": False,
             "alternatives": [{"value": False, "confidence": 0.01}],
-            "provider": "laya_mcp",
+            # The Broker's real order is Ollama/Nimble first, then Laya (Client_API 15.4).
+            "provider": "ollama_system1",
             "model": "test-judge",
             "latency_ms": 2.0,
             "fallback_used": False,
             "reason_code": None,
             "attempts": [
                 {
-                    "provider": "laya_mcp",
+                    "provider": "ollama_system1",
                     "model": "test-judge",
                     "latency_ms": 2.0,
                     "reason_code": None,
@@ -240,18 +241,19 @@ def test_judge_failure_falls_back_once(tmp_path: Path, failure: str, reason: str
     assert len(fake.judgments) == 1 and len(fake.submissions) == 1
 
 
-def test_laya_failure_and_ollama_fallback_can_still_approve(tmp_path: Path) -> None:
+def test_ollama_failure_and_laya_fallback_can_still_approve(tmp_path: Path) -> None:
     fake = System1Broker()
-    fake.judgment.update(provider="ollama_system1", fallback_used=True, reason_code="MCP_ERROR")
+    fake.judgment.update(provider="laya_mcp", fallback_used=True, reason_code="TIMEOUT")
     fake.judgment["attempts"].insert(
-        0, {"provider": "laya_mcp", "model": None, "latency_ms": 1.0, "reason_code": "MCP_ERROR"}
+        0,
+        {"provider": "ollama_system1", "model": None, "latency_ms": 1.0, "reason_code": "TIMEOUT"},
     )
-    fake.judgment["attempts"][1]["provider"] = "ollama_system1"
+    fake.judgment["attempts"][1]["provider"] = "laya_mcp"
     result, gate, _ = execute(tmp_path, fake)
     audit = result.audit["review_gate"]
-    assert audit["provider"] == "ollama_system1" and audit["provider_fallback_used"]
+    assert audit["provider"] == "laya_mcp" and audit["provider_fallback_used"]
     assert audit["reviewer_skipped"] and not audit["fallback"]
-    assert audit["broker_reason_code"] == "MCP_ERROR"
+    assert audit["broker_reason_code"] == "TIMEOUT"
     assert audit["tokens_input"] is None  # The failed provider did not report tokens.
     assert gate.metrics.counts["provider_fallbacks"] == 1
 
@@ -814,6 +816,10 @@ def test_reviewer_replay_does_not_double_count_execution_or_shadow_disagreement(
         {"threshold": "0.97"},
         {"threshold": True},
         {"thresholds_by_task_type": {"report": float("nan")}},
+        {"thresholds_by_task_type": {"report": 0.9}},
+        {"thresholds_by_task_type": {"translation": 0.99}},
+        {"instructions": "   "},
+        {"instructions": ""},
         {"timeout_seconds": 0},
         {"enabled": "true"},
         {"shadow_mode": "false"},
@@ -823,3 +829,13 @@ def test_reviewer_replay_does_not_double_count_execution_or_shadow_disagreement(
 def test_invalid_config_cannot_enable_gate(config: dict[str, Any]) -> None:
     with pytest.raises(ValueError):
         gate_config(**config)
+
+
+def test_configured_instructions_are_sent_to_the_broker(tmp_path: Path) -> None:
+    # The Broker profile has no instructions: Agora must always send some.
+    fake = System1Broker()
+    execute(tmp_path, fake, config=gate_config(instructions="Judge strictly."))
+    assert fake.judgments[0]["instructions"] == "Judge strictly."
+    default = System1Broker()
+    execute(tmp_path / "default", default)
+    assert default.judgments[0]["instructions"] == ReviewGateConfig().instructions

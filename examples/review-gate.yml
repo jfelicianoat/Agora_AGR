@@ -9,4 +9,5 @@ thresholds_by_task_type: {}
 timeout_seconds: 75.0
 uncalibrated_policy: review
 use_case: agora_review_gate
+# instructions: "..."  # optional; defaults to Agora's text (the Broker profile has none)
 reviewer_verdict_field: null

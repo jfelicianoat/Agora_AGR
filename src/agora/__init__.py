@@ -11,7 +11,7 @@ from agora.profiles import Profile
 try:
     __version__ = version("agora-atomic-work")
 except PackageNotFoundError:  # ejecutado desde el repo, sin instalar
-    __version__ = "0.2.10+dev"
+    __version__ = "0.2.11+dev"
 
 __all__ = [
     "Board",

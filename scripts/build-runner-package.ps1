@@ -38,6 +38,15 @@ function Invoke-Native {
     finally { $ErrorActionPreference = $previous }
 }
 
+# Ordenar por nombre pone '0.2.9' por delante de '0.2.11' (el 9 gana al 1) y
+# elegiria el wheel viejo. Se ordena por la version que lleva el nombre.
+function Get-WheelVersion {
+    param([Parameter(Mandatory = $true)][System.IO.FileInfo]$File)
+    $parsed = $null
+    if ([version]::TryParse(($File.BaseName -split '-')[1], [ref]$parsed)) { return $parsed }
+    return [version]'0.0'
+}
+
 $repo = Split-Path -Parent $PSScriptRoot
 Push-Location $repo
 try {
@@ -46,7 +55,7 @@ try {
     Invoke-Native -Exe $PythonExe -Arguments @('-m', 'build', '--wheel') -FailureMessage 'Fallo la construccion del wheel'
 
     $wheel = Get-ChildItem (Join-Path $repo 'dist') -Filter '*.whl' |
-        Sort-Object Name -Descending | Select-Object -First 1
+        Sort-Object { Get-WheelVersion $_ } -Descending | Select-Object -First 1
     if (-not $wheel) { throw 'No se genero ningun wheel' }
     $version = ($wheel.BaseName -split '-')[1]
 

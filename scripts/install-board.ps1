@@ -57,13 +57,22 @@ function Write-Ok($message) { Write-Host "   $message" -ForegroundColor Green }
 
 if (-not $Workspace) { $Workspace = Join-Path $InstallDir 'workspace' }
 
+# Ordenar por nombre pone '0.2.9' por delante de '0.2.11' (el 9 gana al 1) y
+# elegiria el wheel viejo. Se ordena por la version que lleva el nombre.
+function Get-WheelVersion {
+    param([Parameter(Mandatory = $true)][System.IO.FileInfo]$File)
+    $parsed = $null
+    if ([version]::TryParse(($File.BaseName -split '-')[1], [ref]$parsed)) { return $parsed }
+    return [version]'0.0'
+}
+
 # --- 1. Paquete ---------------------------------------------------------------
 
 Write-Step 'Localizando el paquete de Agora'
 if (-not $Wheel) {
     foreach ($folder in @($PSScriptRoot, (Join-Path $PSScriptRoot '..\dist'), (Join-Path $InstallDir 'deploy'))) {
         $candidate = Get-ChildItem -Path $folder -Filter 'agora_atomic_work-*.whl' -ErrorAction SilentlyContinue |
-            Sort-Object Name -Descending | Select-Object -First 1
+            Sort-Object { Get-WheelVersion $_ } -Descending | Select-Object -First 1
         if ($candidate) { $Wheel = $candidate.FullName; break }
     }
 }

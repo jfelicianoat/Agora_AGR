@@ -34,22 +34,20 @@ def scenario(name: str) -> tuple[System1Broker, dict[str, Any], dict[str, Any]]:
         broker.judgment["confidence"] = 0.96
     elif name == "Broker de juicio caído":
         broker.judge_failure = "offline"
-    elif name == "LAYA falla, Ollama acepta":
-        broker.judgment.update(
-            provider="ollama_system1", fallback_used=True, reason_code="MCP_ERROR"
-        )
+    elif name == "Ollama falla, LAYA acepta":
+        broker.judgment.update(provider="laya_mcp", fallback_used=True, reason_code="TIMEOUT")
         broker.judgment["attempts"].insert(
             0,
             {
-                "provider": "laya_mcp",
+                "provider": "ollama_system1",
                 "model": None,
                 "latency_ms": 1.0,
-                "reason_code": "MCP_ERROR",
+                "reason_code": "TIMEOUT",
                 "tokens_input": 5,
                 "tokens_output": 0,
             },
         )
-        broker.judgment["attempts"][1]["provider"] = "ollama_system1"
+        broker.judgment["attempts"][1]["provider"] = "laya_mcp"
     elif name == "Feature off":
         config["enabled"] = False
     elif name == "Shadow mode":
@@ -70,7 +68,7 @@ def run(iterations: int) -> dict[str, Any]:
         "Tests fallidos",
         "Confianza 0.96",
         "Broker de juicio caído",
-        "LAYA falla, Ollama acepta",
+        "Ollama falla, LAYA acepta",
         "Feature off",
         "Shadow mode",
         "Respuesta inválida",
@@ -106,7 +104,15 @@ def run(iterations: int) -> dict[str, Any]:
                     config=gate_config(enabled=False),
                 )
                 baseline_elapsed.append((time.perf_counter() - start) * 1000)
-            audit = result.audit["review_gate"]
+            # Feature off is the previous flow exactly: the gate leaves no audit.
+            audit = result.audit.get("review_gate") or {
+                "tokens_input": None,
+                "tokens_output": None,
+                "confidence": None,
+                "reason": None,
+                "reviewer_executed": bool(broker.submissions),
+                "reviewer_skipped": False,
+            }
             judgment_tokens = (
                 audit["tokens_input"] + audit["tokens_output"]
                 if audit["tokens_input"] is not None and audit["tokens_output"] is not None

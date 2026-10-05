@@ -53,12 +53,24 @@ class ReviewGateConfig(BaseModel):
     timeout_seconds: float = Field(default=75.0, gt=0, allow_inf_nan=False, strict=True)
     uncalibrated_policy: Literal["review", "allow"] = "review"
     use_case: str = Field(default="agora_review_gate", pattern=r"^[A-Za-z0-9_-]{1,128}$")
+    # The Broker profile `agora_review_gate` carries no instructions of its own
+    # (it answers MISSING_INSTRUCTIONS without them), so Agora always sends these.
+    instructions: str = Field(default=_INSTRUCTIONS, min_length=1, max_length=4000)
     # Compare only a reviewer verdict explicitly designated by its operator.
     reviewer_verdict_field: str | None = None
 
     def model_post_init(self, __context: Any) -> None:
         if any(not value.strip() for value in self.reviewer_profiles + self.task_types):
             raise ValueError("reviewer profiles and task types must be nonempty")
+        if not self.instructions.strip():
+            raise ValueError("instructions must be nonempty")
+        # A per-type threshold can only tighten the general one: the Broker profile
+        # already rejects below its own minimum, so a lower value would be dead config.
+        for task_type, value in self.thresholds_by_task_type.items():
+            if task_type not in self.task_types:
+                raise ValueError(f"threshold for disabled task type: {task_type}")
+            if value < self.threshold:
+                raise ValueError(f"threshold for {task_type} is below the general threshold")
 
     @classmethod
     def load(cls, path: Path) -> ReviewGateConfig:
@@ -230,7 +242,7 @@ class ReviewGate:
                     "evidence": context.evidence,
                     "metadata": {"task_type": context.task_type},
                 },
-                instructions=_INSTRUCTIONS,
+                instructions=self.config.instructions,
                 timeout_seconds=self.config.timeout_seconds,
             )
         except httpx.TimeoutException:

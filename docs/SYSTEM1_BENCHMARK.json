@@ -12,8 +12,8 @@
       "reason": "AUTOAPPROVED",
       "reviewer_executed": false,
       "result": "Aprobación gate",
-      "baseline_client_ms_median": 5.748799885623157,
-      "gate_client_ms_median": 4.802300012670457,
+      "baseline_client_ms_median": 5.240199971012771,
+      "gate_client_ms_median": 4.276949912309647,
       "baseline_tokens_simulated": 120,
       "gate_tokens_simulated": 26,
       "metrics_last_iteration": {
@@ -34,7 +34,7 @@
           "review_replays": 0,
           "token_measurements_missing": 0
         },
-        "latency_ms": 0.19020005129277706,
+        "latency_ms": 0.18489989452064037,
         "fallback_rate": 0.0
       }
     },
@@ -45,8 +45,8 @@
       "reason": "NOT_SATISFIED",
       "reviewer_executed": true,
       "result": "Entrega reviewer mock",
-      "baseline_client_ms_median": 5.313999950885773,
-      "gate_client_ms_median": 5.809550057165325,
+      "baseline_client_ms_median": 5.262600025162101,
+      "gate_client_ms_median": 5.760149913839996,
       "baseline_tokens_simulated": 120,
       "gate_tokens_simulated": 146,
       "metrics_last_iteration": {
@@ -67,7 +67,7 @@
           "review_replays": 0,
           "token_measurements_missing": 0
         },
-        "latency_ms": 0.1816998701542616,
+        "latency_ms": 0.19880011677742004,
         "fallback_rate": 1.0
       }
     },
@@ -78,8 +78,8 @@
       "reason": "REQUIRED_VERIFICATION_NOT_PASSED",
       "reviewer_executed": true,
       "result": "Entrega reviewer mock",
-      "baseline_client_ms_median": 5.182099994271994,
-      "gate_client_ms_median": 5.083200056105852,
+      "baseline_client_ms_median": 5.371749983169138,
+      "gate_client_ms_median": 5.3684000158682466,
       "baseline_tokens_simulated": 120,
       "gate_tokens_simulated": 120,
       "metrics_last_iteration": {
@@ -111,8 +111,8 @@
       "reason": "LOW_CONFIDENCE",
       "reviewer_executed": true,
       "result": "Entrega reviewer mock",
-      "baseline_client_ms_median": 5.34795003477484,
-      "gate_client_ms_median": 5.682099959813058,
+      "baseline_client_ms_median": 5.3829001262784,
+      "gate_client_ms_median": 5.969300051219761,
       "baseline_tokens_simulated": 120,
       "gate_tokens_simulated": 146,
       "metrics_last_iteration": {
@@ -133,7 +133,7 @@
           "review_replays": 0,
           "token_measurements_missing": 0
         },
-        "latency_ms": 0.19749999046325684,
+        "latency_ms": 0.21119997836649418,
         "fallback_rate": 1.0
       }
     },
@@ -144,8 +144,8 @@
       "reason": "BROKER_ERROR",
       "reviewer_executed": true,
       "result": "Entrega reviewer mock",
-      "baseline_client_ms_median": 5.275000003166497,
-      "gate_client_ms_median": 5.98249991890043,
+      "baseline_client_ms_median": 5.5654001189395785,
+      "gate_client_ms_median": 5.991050042212009,
       "baseline_tokens_simulated": 120,
       "gate_tokens_simulated": null,
       "metrics_last_iteration": {
@@ -166,19 +166,19 @@
           "review_replays": 0,
           "token_measurements_missing": 1
         },
-        "latency_ms": 0.11100014671683311,
+        "latency_ms": 0.11159991845488548,
         "fallback_rate": 1.0
       }
     },
     {
-      "scenario": "LAYA falla, Ollama acepta",
+      "scenario": "Ollama falla, LAYA acepta",
       "deterministic_validation": "passed",
       "confidence": 0.99,
       "reason": "AUTOAPPROVED",
       "reviewer_executed": false,
       "result": "Aprobación gate",
-      "baseline_client_ms_median": 5.087750032544136,
-      "gate_client_ms_median": 4.190449952147901,
+      "baseline_client_ms_median": 5.473199998959899,
+      "gate_client_ms_median": 4.930849885568023,
       "baseline_tokens_simulated": 120,
       "gate_tokens_simulated": 31,
       "metrics_last_iteration": {
@@ -199,7 +199,7 @@
           "review_replays": 0,
           "token_measurements_missing": 0
         },
-        "latency_ms": 0.1900000497698784,
+        "latency_ms": 0.24030008353292942,
         "fallback_rate": 0.0
       }
     },
@@ -207,20 +207,20 @@
       "scenario": "Feature off",
       "deterministic_validation": "passed",
       "confidence": null,
-      "reason": "FEATURE_DISABLED",
+      "reason": null,
       "reviewer_executed": true,
       "result": "Entrega reviewer mock",
-      "baseline_client_ms_median": 5.214249948039651,
-      "gate_client_ms_median": 5.346150021068752,
+      "baseline_client_ms_median": 5.8157999301329255,
+      "gate_client_ms_median": 5.687800003215671,
       "baseline_tokens_simulated": 120,
       "gate_tokens_simulated": 120,
       "metrics_last_iteration": {
         "counts": {
-          "reviewable_outputs": 1,
+          "reviewable_outputs": 0,
           "judgments": 0,
-          "reviewers_submitted": 1,
-          "reviewers_executed": 1,
-          "reviewer_execution_observations": 1,
+          "reviewers_submitted": 0,
+          "reviewers_executed": 0,
+          "reviewer_execution_observations": 0,
           "reviewer_execution_unobserved": 0,
           "reviewers_skipped": 0,
           "fallbacks": 0,
@@ -243,8 +243,8 @@
       "reason": "SHADOW_APPROVAL",
       "reviewer_executed": true,
       "result": "Entrega reviewer mock",
-      "baseline_client_ms_median": 5.392450024373829,
-      "gate_client_ms_median": 5.8230499271303415,
+      "baseline_client_ms_median": 5.312149995006621,
+      "gate_client_ms_median": 5.91609999537468,
       "baseline_tokens_simulated": 120,
       "gate_tokens_simulated": 146,
       "metrics_last_iteration": {
@@ -265,7 +265,7 @@
           "review_replays": 0,
           "token_measurements_missing": 0
         },
-        "latency_ms": 0.1851001288741827,
+        "latency_ms": 0.19209994934499264,
         "fallback_rate": 0.0
       }
     },
@@ -276,8 +276,8 @@
       "reason": "INVALID_OUTPUT",
       "reviewer_executed": true,
       "result": "Entrega reviewer mock",
-      "baseline_client_ms_median": 5.295449984259903,
-      "gate_client_ms_median": 5.796649842523038,
+      "baseline_client_ms_median": 5.36670011933893,
+      "gate_client_ms_median": 5.967549979686737,
       "baseline_tokens_simulated": 120,
       "gate_tokens_simulated": null,
       "metrics_last_iteration": {
@@ -298,7 +298,7 @@
           "review_replays": 0,
           "token_measurements_missing": 1
         },
-        "latency_ms": 0.20439992658793926,
+        "latency_ms": 0.32410002313554287,
         "fallback_rate": 1.0
       }
     },
@@ -309,8 +309,8 @@
       "reason": "MANDATORY_REVIEW",
       "reviewer_executed": true,
       "result": "Entrega reviewer mock",
-      "baseline_client_ms_median": 6.644299952313304,
-      "gate_client_ms_median": 6.603299989365041,
+      "baseline_client_ms_median": 5.499000078998506,
+      "gate_client_ms_median": 5.460900021716952,
       "baseline_tokens_simulated": 120,
       "gate_tokens_simulated": 120,
       "metrics_last_iteration": {
@@ -342,8 +342,8 @@
       "reason": "UNCALIBRATED_SCORE",
       "reviewer_executed": true,
       "result": "Entrega reviewer mock",
-      "baseline_client_ms_median": 6.336950114928186,
-      "gate_client_ms_median": 7.5304999481886625,
+      "baseline_client_ms_median": 5.3521000081673265,
+      "gate_client_ms_median": 6.148900021798909,
       "baseline_tokens_simulated": 120,
       "gate_tokens_simulated": 146,
       "metrics_last_iteration": {
@@ -364,7 +364,7 @@
           "review_replays": 0,
           "token_measurements_missing": 0
         },
-        "latency_ms": 0.2435001078993082,
+        "latency_ms": 0.19899988546967506,
         "fallback_rate": 1.0
       }
     }

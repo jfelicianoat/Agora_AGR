@@ -1,6 +1,7 @@
 # System-1 antes de tarjetas de revisión de resultados
 
-Entrega del 2 de octubre de 2026. Contrato de referencia: `docs/Client_API.md`
+Entrega del 2 de octubre de 2026, revisada el 3 de octubre (versión 0.2.11).
+Contrato de referencia: `docs/Client_API.md`
 2.11, sección 15, del directorio padre de Agora.
 
 ## Arquitectura y alcance acordado
@@ -38,22 +39,30 @@ El runner acepta `--review-gate-config RUTA.yml`. La plantilla está en
 | `reviewer_profiles` | `[]` | Nombres exactos de perfiles existentes de revisión de resultados |
 | `task_types` | `[]` | Tipos habilitados explícitamente |
 | `threshold` | `0.97` | Confianza mínima inclusiva |
-| `thresholds_by_task_type` | `{}` | Umbrales por tipo, entre 0 y 1 |
+| `thresholds_by_task_type` | `{}` | Umbrales por tipo; sólo pueden endurecer `threshold` y deben ser de un tipo de `task_types` |
 | `timeout_seconds` | `75.0` | Timeout HTTP de un juicio, suficiente para dos intentos de 30 s |
 | `uncalibrated_policy` | `review` | `review` conserva reviewer; `allow` acepta el score sin calibrar |
 | `use_case` | `agora_review_gate` | Identificador enviado al Broker |
+| `instructions` | texto de Agora | Instrucciones del juicio (1–4000 caracteres). Se envían siempre: el perfil del Broker no trae las suyas |
 | `reviewer_verdict_field` | `null` | Campo booleano raíz del JSON del reviewer para comparar en sombra |
 
 Para comenzar, activar `enabled`, añadir los nombres de los reviewers reales
 y los tipos de tareas, y conservar `shadow_mode: true`. No usar el perfil
 personal `review-analyzer` como reviewer de resultados.
 
+El umbral efectivo es el mayor entre el de Agora y el del perfil del Broker
+(`agora_review_gate`, 0.97): el Broker rechaza con `LOW_CONFIDENCE` todo lo que
+quede por debajo del suyo, así que bajar el de Agora no aprueba nada más. Por eso
+la configuración rechaza umbrales por tipo inferiores al general. No conviene
+bajarlo: en vivo, una inyección «responde true» sacó de Nimble `true` con 0.93,
+y sólo el umbral la detuvo.
+
 El contrato 2.11 informa actualmente `confidence_is_calibrated: false`. Con la
 política predeterminada siempre se conserva el reviewer. Para estudiar
 propuestas sobre esos scores en sombra, el operador puede elegir expresamente
 `uncalibrated_policy: allow`; el score sigue sin ser una probabilidad validada.
-La aplicación no elige ni un modelo ni el orden de proveedores. El contrato
-nuevo deja ese orden al AI_Broker, aunque el prompt inicial sugiriera LAYA primero.
+La aplicación no elige ni un modelo ni el orden de proveedores. El AI_Broker
+intenta Ollama/Nimble primero y Laya después (`Client_API.md` §15.4).
 
 ## Entrada de una tarjeta
 
@@ -220,7 +229,7 @@ tipadas, umbrales, calibración y recuperación. Benchmark:
 | Confianza inicial 0.97 inclusiva, configurable por tipo | Tests 0.96, 0.97, 0.99 y umbral específico 0.995 |
 | Calibración configurable y conservadora | Test de score sin calibrar y plantilla `uncalibrated_policy: review` |
 | Caída, timeout, JSON inválido y rechazo conservan reviewer | Tests de error de transporte/HTTP, timeout, tipos inválidos y rechazo del Broker |
-| Fallback entre proveedores aceptado | Fixture LAYA fallida/Ollama aceptada; no impone ese orden al Broker real |
+| Fallback entre proveedores aceptado | Fixture Ollama fallida/LAYA aceptada, el orden real del Broker; Agora no lo impone |
 | Shadow no altera entrega y permite detectar discrepancias | Tests de entrega normal y veredicto booleano explícito contradictorio |
 | Auditoría de decisión y estado durable | Tests API → runner → cierre, timeout → reanudación y fallo de cierre → reutilización |
 | Respeta contratos de salida | Tests de contrato compatible de aprobación y `REVIEWER_OUTPUT_CONTRACT` para análisis/notas; perfiles y contratos publicados sin cambios |
@@ -235,7 +244,8 @@ Se excluye únicamente el diagnóstico de stubs PyYAML ausentes en el entorno.
 La verificación de esta entrega exige cero errores nuevos; no declara que todo
 el tipado previo esté corregido.
 
-Verificación final: **597 tests pasan**, incluidos **76 tests** del gate,
+Verificación final (0.2.11, tras las revisiones del 3 de octubre que se
+detallan abajo): **602 tests pasan**, incluidos **81 tests** del gate,
 sin fallos ni casos omitidos. Ruff pasa en todos los archivos Python modificados
 y nuevos; la comparación de tipos conserva los 93 errores anteriores y añade
 cero errores. El benchmark incluye 11 escenarios con 20 repeticiones cada uno.
@@ -266,9 +276,10 @@ notas nativas en modo activo y sombra, y rechazo de las dos clases de notas
 anteriores. La comprobación usa respuestas simuladas del contrato, sin invocar
 proveedores reales ni medir su calibración.
 
-Revisión del 3 de octubre de 2026: **592 tests pasan** tras corregir el gate
-deshabilitado y la métrica de fallback entre proveedores, cada una con su test,
-y ambos tests fallan con el código anterior. Verificación en vivo contra el
+Primera revisión del 3 de octubre de 2026, anterior a los cinco casos de §15.8
+(entonces **592 tests**): se corrigió el gate
+deshabilitado y la métrica de fallback entre proveedores, cada una con su test;
+ambos tests fallan con el código anterior. Verificación en vivo contra el
 Broker 2.11 del PC IA, con el `ReviewGate` y el `BrokerClient` reales y
 `uncalibrated_policy: allow`:
 
@@ -283,3 +294,25 @@ Cada juicio tardó unos 0,2–0,5 s. Laya no intervino en ningún caso: el Broke
 no lo intenta tras `LOW_CONFIDENCE`, y su fallback sigue sin verificarse en
 vivo. Con la política predeterminada `review`, el Broker actual
 (`confidence_is_calibrated: false`) nunca permite omitir el reviewer.
+
+## Segunda revisión del 3 de octubre de 2026 (0.2.11)
+
+- **Benchmark.** Desde el arreglo del gate deshabilitado, el escenario «Feature
+  off» no deja auditoría y `scripts/benchmark_review_gate.py` fallaba con
+  `KeyError`. Ahora lo trata como el flujo anterior y los `SYSTEM1_BENCHMARK.*`
+  se han regenerado (ya no aparece el motivo inexistente `FEATURE_DISABLED`).
+- **Orden de proveedores.** Las fixtures y el benchmark usan el orden real del
+  Broker: Ollama/Nimble primero; el caso de fallback es «Ollama falla, LAYA acepta».
+- **Umbrales por tipo.** La configuración rechaza un umbral por tipo inferior al
+  general o de un tipo que no está en `task_types`.
+- **Instrucciones.** Son configurables (`instructions`). El perfil
+  `agora_review_gate` del Broker no trae instrucciones: sin las de Agora, el
+  Broker responde `MISSING_INSTRUCTIONS` (comprobado en vivo).
+- **Versión 0.2.11.** El gate llegó con la 0.2.10 de la entrega anterior. El
+  tablero 0.2.9 desplegado rechazaba `review_context` con `extra_forbidden`, así
+  que el gate no podía funcionar de punta a punta hasta actualizar tablero y runner.
+
+Verificación en vivo repetida con el Broker 2.11 (`agora_review_gate`, Nimble):
+los mismos cuatro escenarios dan el mismo resultado, en 0,12–0,16 s por juicio.
+En la inyección, el intento crudo de Nimble fue `true` con 0.934 y el de la
+implementación errónea `false` con 0.921; ambos quedaron por debajo de 0.97.
