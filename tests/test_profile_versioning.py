@@ -68,7 +68,7 @@ def test_the_notation_splits_name_from_line(valor: str, esperado: tuple) -> None
 
 
 def test_a_version_that_is_not_a_number_is_refused() -> None:
-    with pytest.raises(ValueError, match="numero de linea"):
+    with pytest.raises(ValueError, match="major line number"):
         parse_recipient("task-intake@uno")
 
 

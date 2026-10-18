@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from agora.api.contracts import CloseRequest, CreateCardRequest, InputResource, WorkItem
+from agora.api.projection import ErrorCode
 from agora.application import AgoraApplication
 from agora.board import BoardState
 from agora.cards import Card
@@ -25,6 +26,13 @@ from agora.profiles import load_profiles
 #: Destinatarios que significan «esto lo hace una persona». El despachador los
 #: salta antes de emparejar, asi que no son un destinatario invalido.
 _HUMAN_RECIPIENTS = frozenset({"human", "persona", "user"})
+
+#: Codigo contractual de cada forma de no emparejar (ver `projection.ErrorCode`).
+_UNMATCHED_CODES: dict[MatchStatus, ErrorCode] = {
+    MatchStatus.INVALID_RECIPIENT: "invalid_recipient",
+    MatchStatus.UNMATCHED: "no_matching_profile",
+    MatchStatus.AMBIGUOUS: "ambiguous_profile",
+}
 
 
 class RemoteWorkService:
@@ -51,6 +59,9 @@ class RemoteWorkService:
             ),
         )
         card.metadata["origin_identity"] = principal
+        # Quien llega autenticado con `cards:write` es de confianza para el
+        # despachador, sea el principal provisional o un sujeto OAuth (AG-01).
+        self.application.trust_origin(principal)
         if request.review_context is not None:
             card.metadata["review_context"] = request.review_context.model_dump(mode="json")
         card.append_record("agora-api", [f"CARD accepted from authenticated client {principal}."])
@@ -241,20 +252,21 @@ class RemoteWorkService:
             increment_attempts=increment_attempts,
         )
 
-    def recipient_mismatch(self, filename: str) -> str:
-        """Por que ningun perfil puede ejecutar esta tarjeta pendiente, si es por su destinatario.
+    def unmatched(self, filename: str) -> tuple[ErrorCode, str] | None:
+        """Por que ningun perfil puede ejecutar esta tarjeta pendiente: `(codigo, motivo)`.
 
-        Devuelve el motivo del emparejamiento, o cadena vacia si la tarjeta no
-        fija destinatario, va dirigida a una persona o si empareja. Solo mira
-        el destinatario a proposito: una tarjeta sin destinatario que no
-        empareja por su peticion es otro caso, y sigue en cola como siempre.
+        `None` si empareja o va dirigida a una persona. Antes solo se miraba el
+        destinatario, y una peticion que no empezaba por ningun handle se
+        proyectaba `queued` para siempre (AG-04): el cliente no podia saber que
+        nadie la iba a recoger.
         """
         path = self.board.directory(BoardState.PENDING) / _plain_card_name(filename)
         card = Card.load(path)
-        if not card.recipient or card.recipient.strip().lower() in _HUMAN_RECIPIENTS:
-            return ""
+        if card.recipient and card.recipient.strip().lower() in _HUMAN_RECIPIENTS:
+            return None
         result = match_card(card, load_profiles(self.application.profiles_root))
-        return result.reason if result.status is MatchStatus.INVALID_RECIPIENT else ""
+        code = _UNMATCHED_CODES.get(result.status)
+        return (code, result.reason or result.status.value) if code else None
 
     def unblock(self, filename: str, *, principal: str, reason: str) -> Path:
         return self.board.unblock(filename, actor=principal, reason=reason)
@@ -334,6 +346,14 @@ class RemoteWorkService:
     def _owned_claim(self, filename: str, runner_id: str) -> Path:
         name = _plain_card_name(filename)
         path = self.board.directory(BoardState.IN_PROGRESS) / name
+        if not path.is_file():
+            # Antes `Card.load` reventaba aqui y el cliente recibia un 404 con la
+            # ruta absoluta del servidor (AG-03). Si la tarjeta existe en otro
+            # estado no es «no encontrada»: es una transicion que ya no vale.
+            for state in BoardState:
+                if (self.board.directory(state) / name).is_file():
+                    raise InvalidTransition(f"CARD is not in progress (state: {state.value})")
+            raise FileNotFoundError(f"CARD not found: {name}")
         card = Card.load(path)
         if card.metadata.get("agent") != runner_id:
             raise InvalidTransition("runner does not own this claim")

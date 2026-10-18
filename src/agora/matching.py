@@ -53,7 +53,7 @@ def parse_recipient(value: str) -> tuple[str, int | None]:
     if not separator:
         return value.strip(), None
     if not wanted.strip().isdigit():
-        raise ValueError(f"la version fijada tiene que ser un numero de linea: {value!r}")
+        raise ValueError(f"pinned version must be a major line number: {value!r}")
     return name.strip(), int(wanted)
 
 
@@ -80,7 +80,7 @@ def match_card(card: Card, profiles: Iterable[Profile]) -> MatchResult:
                 MatchStatus.INVALID_RECIPIENT,
                 candidates=(f"{direct[0].name}@{direct[0].major}",),
                 reason=(
-                    f"se pidio {wanted_name}@{wanted_major} y aqui hay "
+                    f"requested {wanted_name}@{wanted_major} but this board has "
                     f"{direct[0].name}@{direct[0].major} ({direct[0].version})"
                 ),
             )

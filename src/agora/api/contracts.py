@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt
 
 
 class StrictModel(BaseModel):
@@ -61,13 +61,19 @@ class ExternalReference(StrictModel):
     version: int = Field(default=1, ge=1, le=1000)
 
 
+#: Prioridad de una CARD: un nombre del vocabulario o un numero de 0 a 1000 (mayor
+#: antes). Antes se aceptaba cualquier texto o numero, y «baja» o 7 entraban con
+#: 201 y se ordenaban como `normal` sin avisar (AG-05).
+Priority = Literal["low", "normal", "high", "urgent"] | Annotated[StrictInt, Field(ge=0, le=1000)]
+
+
 class CreateCardRequest(StrictModel):
     filename: str = Field(min_length=4, max_length=180)
     function: str = Field(min_length=1, max_length=120)
     request: str = Field(min_length=1, max_length=20_000)
     inputs: dict[str, Any] | None = None
     destination: str | None = Field(default=None, max_length=500)
-    priority: str | int = "normal"
+    priority: Priority = "normal"
     recipient: str | None = Field(default=None, max_length=120)
     max_attempts: int = Field(default=3, ge=1, le=100)
     body: str = Field(default="", max_length=100_000)

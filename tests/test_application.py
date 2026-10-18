@@ -81,7 +81,7 @@ def test_dispatch_action_uses_domain_service_and_records_activity(tmp_path: Path
     assert outcomes[0].status == "dispatched"
     assert not snapshot.cards_in(BoardState.PENDING)
     assert snapshot.cards_in(BoardState.DONE)[0].filename == "task.md"
-    assert any("task.md: dispatched via summarizer" in item.message for item in snapshot.activity)
+    assert any("task.md: despachada con summarizer" in item.message for item in snapshot.activity)
     detail = service.card_detail(BoardState.DONE, "task.md")
     assert "CARD closed." in detail.record
     assert Path(detail.metadata["paths"][0]).is_file()

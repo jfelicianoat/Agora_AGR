@@ -11,6 +11,9 @@ from typing import Any
 from agora.documents import atomic_write_text, parse_markdown_document, render_markdown_document
 from agora.errors import CardFormatError, DocumentFormatError
 
+#: Orden de la cola para los nombres de prioridad; un numero se usa tal cual.
+PRIORITY_SCORES = {"low": 50, "normal": 100, "high": 500, "urgent": 1000}
+
 _REQUIRED_FIELDS = ("function", "request", "created", "origin", "paths", "attempts")
 
 
@@ -134,7 +137,8 @@ class Card:
         value = self.metadata.get("priority", "normal")
         if isinstance(value, int) and not isinstance(value, bool):
             return value
-        return 1000 if str(value).strip().lower() == "urgent" else 100
+        # Lo que no esta en el vocabulario (CARD dejada a mano) cuenta como normal.
+        return PRIORITY_SCORES.get(str(value).strip().lower(), PRIORITY_SCORES["normal"])
 
     def ensure_record(self) -> None:
         if not any(line.strip().lower() == "## record" for line in self.body.splitlines()):

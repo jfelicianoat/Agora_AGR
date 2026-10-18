@@ -19,7 +19,7 @@ from agora.api.contracts import (
     WorkItem,
     YieldRequest,
 )
-from agora.api.projection import project, project_unmatched_recipient
+from agora.api.projection import project, project_unmatched
 from agora.api.service import RemoteWorkService
 from agora.api.storage import EventStore, IdempotencyConflict, IdempotencyStore
 from agora.application import AgoraApplication
@@ -89,26 +89,40 @@ def create_api(application: AgoraApplication, settings: ApiSettings) -> FastAPI:
     if settings.oauth_authority is not None:
         install_oauth_endpoints(app, settings.oauth_authority)
 
+    workspace_text = str(application.workspace)
+
+    def public(message: str) -> str:
+        """El texto de un error sin la estructura de disco del servidor (AG-03).
+
+        El tablero escucha en la LAN y varias transiciones del dominio nombran
+        la ruta completa de la CARD; al cliente le basta con la relativa.
+        """
+        return message.replace(workspace_text, "<workspace>")
+
     @app.exception_handler(IdempotencyConflict)
     async def idempotency_conflict(_request: Request, exc: IdempotencyConflict) -> Response:
-        return JSONResponse(status_code=409, content={"detail": str(exc)})
+        return JSONResponse(status_code=409, content={"detail": public(str(exc))})
 
     @app.exception_handler(ClaimConflict)
     @app.exception_handler(InvalidTransition)
     async def state_conflict(_request: Request, exc: Exception) -> Response:
-        return JSONResponse(status_code=409, content={"detail": str(exc)})
+        return JSONResponse(status_code=409, content={"detail": public(str(exc))})
 
     @app.exception_handler(CardFormatError)
     async def invalid_card(_request: Request, exc: CardFormatError) -> Response:
-        return JSONResponse(status_code=422, content={"detail": str(exc)})
+        return JSONResponse(status_code=422, content={"detail": public(str(exc))})
 
     @app.exception_handler(FileNotFoundError)
     async def missing_file(_request: Request, exc: FileNotFoundError) -> Response:
-        return JSONResponse(status_code=404, content={"detail": str(exc)})
+        # Un `OSError` del sistema lleva `filename` y su texto es la ruta absoluta
+        # del servidor; eso no sale nunca al cliente (AG-03). Los nuestros se
+        # lanzan con un mensaje propio y sin `filename`.
+        detail = "resource not found" if exc.filename is not None else public(str(exc))
+        return JSONResponse(status_code=404, content={"detail": detail})
 
     @app.exception_handler(ValueError)
     async def invalid_value(_request: Request, exc: ValueError) -> Response:
-        return JSONResponse(status_code=400, content={"detail": str(exc)})
+        return JSONResponse(status_code=400, content={"detail": public(str(exc))})
 
     @app.get("/api/v1/health")
     def health(_principal: Principal) -> dict[str, str]:
@@ -160,9 +174,9 @@ def create_api(application: AgoraApplication, settings: ApiSettings) -> FastAPI:
         if state_name is BoardState.PENDING:
             # En cola solo si alguien puede ejecutarla. Una que pide un perfil o
             # una linea mayor que aqui no hay no espera turno: esta parada.
-            motivo = remote.recipient_mismatch(filename)
-            if motivo:
-                proyeccion = project_unmatched_recipient(motivo)
+            sin_perfil = remote.unmatched(filename)
+            if sin_perfil:
+                proyeccion = project_unmatched(*sin_perfil)
         return {
             "state": state_name.value,
             **proyeccion,

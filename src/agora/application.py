@@ -6,6 +6,7 @@ desktop UI needs in F1, keeping filesystem ownership and domain transitions in t
 
 from __future__ import annotations
 
+import json
 from collections import deque
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -16,7 +17,7 @@ from uuid import uuid4
 
 from agora.board import Board, BoardState
 from agora.cards import Card, format_timestamp, utc_now
-from agora.dispatcher import DEFAULT_TRUSTED_ORIGINS, Dispatcher, DispatchOutcome
+from agora.dispatcher import DEFAULT_TRUSTED_ORIGINS, Dispatcher, DispatchOutcome, DispatchStatus
 from agora.documents import atomic_write_text
 from agora.errors import AgoraError, CardFormatError, ProfileFormatError
 from agora.harnesses import DeterministicHarness, WorkerLauncher
@@ -109,20 +110,72 @@ class AgoraApplication:
         # Quien puede depositar trabajo. `trust_origin` lo amplia cuando el API
         # arranca con un principal propio: una tarjeta que llego autenticada por
         # HTTPS no puede quedarse fuera por no llamarse «human».
-        self.trusted_origins: tuple[str, ...] = tuple(
+        self._configured_origins: tuple[str, ...] = tuple(
             dict.fromkeys(item.strip().lower() for item in trusted_origins if item.strip())
         )
         self._dispatcher_status = "idle"
+        #: Lo que la ultima ronda bloqueo o no pudo hacer, para la pestaña Errores.
+        self._dispatch_errors: tuple[VisibleError, ...] = ()
+
+    @property
+    def _trusted_origins_file(self) -> Path:
+        return self.workspace / ".agora" / "trusted-origins.json"
+
+    @property
+    def trusted_origins(self) -> tuple[str, ...]:
+        """Los configurados mas los que el API de este workspace ya autentico.
+
+        Se lee del disco en cada consulta porque el escritorio y el API son
+        **procesos distintos** sobre el mismo tablero. Cuando la confianza vivia
+        solo en la memoria del API, la ventana bloqueaba por «Untrusted origin»
+        las tarjetas que el propio API habia aceptado con 201 (AG-01, auditoria
+        del 14-oct; `smoke-20260908.md` en produccion). El fichero no es mas
+        falsificable que el campo `origin`: quien escribe en el workspace ya
+        puede poner `origin: human`.
+        """
+        return tuple(dict.fromkeys((*self._configured_origins, *self._persisted_origins())))
 
     def trust_origin(self, origin: str) -> None:
         """Anade un origen de confianza. Idempotente y sin orden significativo."""
         value = origin.strip().lower()
-        if value and value not in self.trusted_origins:
-            self.trusted_origins = (*self.trusted_origins, value)
+        if not value or value in self.trusted_origins:
+            return
+        persisted = self._persisted_origins()
+        target = self._trusted_origins_file
+        target.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_text(
+            target, json.dumps(sorted({*persisted, value}), ensure_ascii=False, indent=2) + "\n"
+        )
+
+    def _persisted_origins(self) -> tuple[str, ...]:
+        """Los origenes registrados por el API; vacio si no hay fichero o no se lee.
+
+        Ilegible cierra en vez de abrir: se vuelve a los configurados, y
+        `snapshot` lo cuenta como error visible.
+        """
+        try:
+            raw = json.loads(self._trusted_origins_file.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return ()
+        if not isinstance(raw, list):
+            return ()
+        return tuple(item.strip().lower() for item in raw if isinstance(item, str) and item.strip())
+
+    def _trust_file_errors(self) -> tuple[VisibleError, ...]:
+        target = self._trusted_origins_file
+        if not target.exists():
+            return ()
+        try:
+            raw = json.loads(target.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            return (VisibleError(str(target), f"No se pudo leer: {exc}"),)
+        if not isinstance(raw, list):
+            return (VisibleError(str(target), "Tiene que ser una lista de orígenes."),)
+        return ()
 
     def initialize(self) -> None:
         self.board.initialize()
-        self._log("info", f"BOARD ready at {self.board.root} (id {self.instance_id})")
+        self._log("info", f"Tablero listo en {self.board.root} (id {self.instance_id})")
 
     @property
     def instance_id(self) -> str:
@@ -150,7 +203,7 @@ class AgoraApplication:
             captured_at=format_timestamp(utc_now()),
             cards=cards,
             profiles=profiles,
-            errors=card_errors + profile_errors,
+            errors=card_errors + profile_errors + self._trust_file_errors() + self._dispatch_errors,
             activity=tuple(self._activity),
             dispatcher_status=self._dispatcher_status,
         )
@@ -169,7 +222,7 @@ class AgoraApplication:
 
     def dispatch_once(self, *, dry_run: bool = False) -> tuple[DispatchOutcome, ...]:
         self._dispatcher_status = "simulating" if dry_run else "running"
-        self._log("info", "Dispatcher dry-run started" if dry_run else "Dispatcher started")
+        self._log("info", "Ronda simulada iniciada" if dry_run else "Ronda iniciada")
         try:
             outcomes = Dispatcher(
                 self.board,
@@ -179,13 +232,26 @@ class AgoraApplication:
             ).run_once(dry_run=dry_run)
         except (AgoraError, OSError) as exc:
             self._dispatcher_status = "error"
-            self._log("error", f"Dispatcher failed: {type(exc).__name__}: {exc}")
+            self._log("error", f"La ronda falló: {type(exc).__name__}: {exc}")
             raise
         for outcome in outcomes:
-            profile = f" via {outcome.profile}" if outcome.profile else ""
+            profile = f" con {outcome.profile}" if outcome.profile else ""
             self._log(
                 "error" if outcome.status == "error" else "info",
-                f"{outcome.card}: {outcome.status.value}{profile} — {outcome.reason}",
+                f"{outcome.card}: {_OUTCOME_LABELS[outcome.status]}{profile} — {outcome.reason}",
+            )
+        # Lo que la ronda movio a Bloqueadas o no pudo hacer. Antes solo quedaba
+        # en Actividad y en el Record, y la pestaña Errores decia «Sin errores»
+        # justo despues de un bloqueo (AG-02). Se sustituye en cada ronda real.
+        if not dry_run:
+            self._dispatch_errors = tuple(
+                VisibleError(
+                    f"Ronda · {outcome.card}",
+                    f"{_OUTCOME_LABELS[outcome.status]}: {outcome.reason}",
+                )
+                for outcome in outcomes
+                if outcome.status is DispatchStatus.ERROR
+                or (outcome.status is DispatchStatus.BLOCKED and outcome.final_path is not None)
             )
         self._dispatcher_status = "idle"
         return outcomes
@@ -262,6 +328,22 @@ class AgoraApplication:
         self._activity.append(
             ActivityEntry(format_timestamp(when or utc_now()), level.lower(), message)
         )
+
+
+#: Como se cuenta cada desenlace en la ventana. Los motivos que acompañan van en
+#: inglés porque son los mismos que viajan por el API (idioma del contrato).
+_OUTCOME_LABELS: dict[DispatchStatus, str] = {
+    DispatchStatus.DISPATCHED: "despachada",
+    DispatchStatus.WOULD_DISPATCH: "se despacharía",
+    DispatchStatus.WAITING_INPUT: "esperando entradas",
+    DispatchStatus.UNMATCHED: "sin perfil compatible",
+    DispatchStatus.AMBIGUOUS: "ambigua",
+    DispatchStatus.BLOCKED: "bloqueada",
+    DispatchStatus.SKIPPED: "omitida",
+    DispatchStatus.CONFLICT: "conflicto",
+    DispatchStatus.ERROR: "error",
+    DispatchStatus.RECOVERED: "rescatada",
+}
 
 
 def _card_summary(state: BoardState, path: Path, card: Card) -> CardSummary:

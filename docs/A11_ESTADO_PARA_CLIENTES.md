@@ -100,8 +100,18 @@ Cuando `status` es `failed`, `blocked` o `cancelled`, la respuesta lleva un
 
 Los códigos son estables y un cliente puede ramificar sobre ellos:
 `attempts_exhausted`, `untrusted_origin`, `cancelled_by_client`,
-`invalid_recipient`, `unknown`. El `message` es para una persona y puede cambiar
+`invalid_recipient`, `no_matching_profile`, `ambiguous_profile`, `unknown`. El `message` es para una persona y puede cambiar
 sin avisar.
+
+### `no_matching_profile` y `ambiguous_profile` (0.2.12, auditoría del 14-oct, AG-04)
+
+La misma idea que `invalid_recipient`, sin destinatario: una tarjeta en
+`pending` cuya `request` no contiene ningún handle de un perfil con su
+`function` (`no_matching_profile`), o que dos perfiles reclaman con la misma
+fuerza (`ambiguous_profile`), se proyecta como `status: blocked`,
+`terminal: false`. `state` sigue siendo `pending` y, si se publica el handle o
+se resuelve el empate, vuelve a `queued` sola. Antes salía `queued` para siempre
+y el cliente no podía saber que nadie la iba a recoger.
 
 ### `invalid_recipient` (añadido en R14 de Gestión Tareas IA)
 

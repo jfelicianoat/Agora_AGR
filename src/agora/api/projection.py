@@ -33,6 +33,8 @@ ErrorCode = Literal[
     "untrusted_origin",
     "cancelled_by_client",
     "invalid_recipient",
+    "no_matching_profile",
+    "ambiguous_profile",
     "unknown",
 ]
 
@@ -73,14 +75,17 @@ def project(state: BoardState, metadata: dict[str, Any]) -> dict[str, Any]:
     return projected
 
 
-def project_unmatched_recipient(reason: str) -> dict[str, Any]:
+def project_unmatched(code: ErrorCode, reason: str) -> dict[str, Any]:
     """Una tarjeta pendiente que **ningun perfil de este tablero puede ejecutar**.
 
     Pasa cuando el cliente pide una linea mayor que aqui no existe
-    (`task-intake@9` con `task-intake` 1.x instalado) o un perfil que no hace
-    esa funcion. El despachador la deja en `pending` sin emparejar, y hasta
-    R14 eso se proyectaba como `queued`: el cliente veia «en cola» para siempre
-    y no podia distinguirlo de un trabajo que espera turno. Se comprobo con el
+    (`task-intake@9` con `task-intake` 1.x instalado), un perfil que no hace
+    esa funcion (`invalid_recipient`), cuando su peticion no contiene ningun
+    handle publicado (`no_matching_profile`, AG-04) o cuando dos perfiles la
+    reclaman con la misma fuerza (`ambiguous_profile`). El despachador la deja
+    en `pending` sin emparejar, y hasta R14 eso se proyectaba como `queued`: el
+    cliente veia «en cola» para siempre y no podia distinguirlo de un trabajo
+    que espera turno. Se comprobo con el
     cliente real de Gestion Tareas IA contra este API.
 
     La carpeta no cambia —la verdad del tablero sigue siendo `pending`, y si se
@@ -91,7 +96,7 @@ def project_unmatched_recipient(reason: str) -> dict[str, Any]:
     return {
         "status": "blocked",
         "terminal": False,
-        "error": {"code": "invalid_recipient", "message": reason},
+        "error": {"code": code, "message": reason},
     }
 
 
@@ -105,7 +110,7 @@ def _blocked(metadata: dict[str, Any]) -> dict[str, Any]:
         code = "unknown"
     error: dict[str, Any] = {
         "code": code,
-        "message": str(detail.get("reason") or "La tarjeta esta bloqueada."),
+        "message": str(detail.get("reason") or "The CARD is blocked."),
     }
     if code == "attempts_exhausted":
         error["attempts"] = metadata.get("attempts")
@@ -123,4 +128,4 @@ def _cancel_reason(metadata: dict[str, Any]) -> str:
     cancelled = metadata.get("cancelled")
     if isinstance(cancelled, dict) and cancelled.get("reason"):
         return str(cancelled["reason"])
-    return "La tarjeta se cancelo."
+    return "The CARD was cancelled."

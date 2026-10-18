@@ -77,8 +77,11 @@ Dos campos mandan aquí:
 - **`handles` es vocabulario público.** El emparejamiento de una tarjeta con un
   perfil se hace **por handle, no por `function`**. Una petición que no empiece
   por uno de los handles declarados **no empareja**, y la tarjeta se queda
-  quieta en `pending` sin que nadie diga nada. Es la trampa más fácil de pisar
-  al integrarse; se pisó al verificar A05.
+  quieta en `pending`. Es la trampa más fácil de pisar al integrarse; se pisó
+  al verificar A05. Los handles están en inglés aunque el resto de la petición
+  vaya en español (`"break down work: impartir un curso…"`). Desde 0.2.12 el
+  estado lo dice: `status: blocked` con `error.code: no_matching_profile`
+  (A11 §`no_matching_profile`); antes se proyectaba `queued` para siempre.
 - **`produces`** dice qué documento devolverá, como `nombre@version`.
 
 Y para saber qué forma tiene ese documento:
@@ -138,6 +141,13 @@ Content-Type: application/json
 - **`request` tiene que empezar por un handle declarado** (§3.0).
 - `body` es el enunciado largo; `request` es la línea que empareja.
 - `Idempotency-Key` es **obligatoria**. Sin ella: `400`.
+- **`priority`** es `low`, `normal` (por defecto), `high`, `urgent` o un entero
+  de 0 a 1000 (mayor, antes). Los nombres pesan 50, 100, 500 y 1000 en la cola.
+  Cualquier otro valor —`"baja"`, `"7"`, `1001`— se rechaza con `422` desde
+  0.2.12; antes entraba con `201` y se ordenaba como `normal` sin avisar.
+- **Idioma del contrato**: los mensajes de error (`detail`, `error.message`) van
+  en inglés; la ventana de escritorio, en español. Un cliente ramifica sobre
+  `error.code`, nunca sobre el texto. Ningún `detail` lleva rutas del servidor.
 
 ### 3.2 Preguntar el estado
 

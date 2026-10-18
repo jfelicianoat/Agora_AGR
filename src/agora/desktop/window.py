@@ -50,6 +50,32 @@ _STATE_COLORS = {
 }
 
 
+_DISPATCHER_LABELS = {
+    "idle": "en espera",
+    "running": "ejecutando",
+    "simulating": "simulando",
+    "error": "error",
+}
+
+_PRIORITY_LABELS = {"low": "baja", "normal": "normal", "high": "alta", "urgent": "urgente"}
+
+
+def _priority_label(value: str) -> str:
+    """La prioridad en español; un número (de 0 a 1000) se muestra como tal."""
+    if value.isdigit():
+        return f"{value} /1000"
+    return _PRIORITY_LABELS.get(value.strip().lower(), f"{value} (no reconocida)")
+
+
+def _blocked_label(metadata: dict[str, object]) -> str:
+    detail = metadata.get("blocked")
+    if not isinstance(detail, dict):
+        return "—"
+    reason = str(detail.get("reason") or "sin motivo registrado")
+    code = detail.get("code")
+    return f"{reason} ({code})" if code else reason
+
+
 class DesktopService(Protocol):
     def snapshot(self) -> AgoraSnapshot: ...
 
@@ -97,7 +123,7 @@ class AgoraMainWindow(QMainWindow):
         dispatch_button.clicked.connect(self.run_dispatcher)
         toolbar.addWidget(dispatch_button)
 
-        self.dispatcher_badge = QLabel("Dispatcher: idle")
+        self.dispatcher_badge = QLabel(f"Despachador: {_DISPATCHER_LABELS['idle']}")
         self.dispatcher_badge.setObjectName("dispatcherStatus")
         toolbar.addSeparator()
         toolbar.addWidget(self.dispatcher_badge)
@@ -149,9 +175,13 @@ class AgoraMainWindow(QMainWindow):
         self.card_title.setObjectName("cardTitle")
         self.card_location = QLabel("—")
         self.card_agent = QLabel("—")
+        self.card_blocked = QLabel("—")
+        self.card_blocked.setObjectName("cardBlocked")
+        self.card_blocked.setWordWrap(True)
         form.addRow("Solicitud", self.card_title)
         form.addRow("Ubicación", self.card_location)
         form.addRow("Agente", self.card_agent)
+        form.addRow("Bloqueo", self.card_blocked)
         layout.addWidget(identity)
         self.card_document = QPlainTextEdit()
         self.card_document.setObjectName("cardDocument")
@@ -223,7 +253,10 @@ class AgoraMainWindow(QMainWindow):
         self._render_profiles(snapshot)
         self._render_activity(snapshot)
         self._render_errors(snapshot)
-        self.dispatcher_badge.setText(f"Dispatcher: {snapshot.dispatcher_status}")
+        self.dispatcher_badge.setText(
+            "Despachador: "
+            + _DISPATCHER_LABELS.get(snapshot.dispatcher_status, snapshot.dispatcher_status)
+        )
         total = len(snapshot.cards)
         blocked = len(snapshot.cards_in(BoardState.BLOCKED))
         self.statusBar().showMessage(
@@ -232,7 +265,7 @@ class AgoraMainWindow(QMainWindow):
         )
 
     def run_dispatcher(self) -> None:
-        self.dispatcher_badge.setText("Dispatcher: ejecutando…")
+        self.dispatcher_badge.setText("Despachador: ejecutando…")
         try:
             self.service.dispatch_once(dry_run=self.dry_run.isChecked())
         except Exception as exc:
@@ -260,19 +293,24 @@ class AgoraMainWindow(QMainWindow):
             self.board_tree.addTopLevelItem(parent)
             for card in cards:
                 label = f"⚠ {card.filename}" if card.corrupt else card.filename
-                item = QTreeWidgetItem([label, card.function, card.priority])
+                item = QTreeWidgetItem([label, card.function, _priority_label(card.priority)])
                 item.setData(0, Qt.ItemDataRole.UserRole, state.value)
                 item.setData(1, Qt.ItemDataRole.UserRole, card.filename)
                 item.setToolTip(0, card.request)
                 if card.corrupt:
                     item.setForeground(0, QColor("#e05d5d"))
                 parent.addChild(item)
-                if selected == (state, card.filename):
+                # Por nombre y no por (estado, nombre): una ronda mueve la
+                # tarjeta de carpeta y el detalle se quedaba con la ubicación y
+                # los intentos viejos (AG-02). El nombre es único en el tablero.
+                if selected is not None and selected[1] == card.filename:
                     restored = item
             parent.setExpanded(True)
         self.board_tree.blockSignals(False)
         if restored is not None:
             self.board_tree.setCurrentItem(restored)
+        elif selected is not None:
+            self._clear_card("La CARD seleccionada ya no está en el tablero.")
 
     def _render_profiles(self, snapshot: AgoraSnapshot) -> None:
         self.profile_table.setRowCount(len(snapshot.profiles))
@@ -310,6 +348,7 @@ class AgoraMainWindow(QMainWindow):
             self.card_title.setText(filename)
             self.card_location.setText(state.value)
             self.card_agent.setText("—")
+            self.card_blocked.setText("—")
             self.card_document.setPlainText(f"CARD ilegible\n\n{type(exc).__name__}: {exc}")
             self.record_view.setPlainText("No se puede mostrar el Record.")
             self.tabs.setCurrentIndex(0)
@@ -320,9 +359,18 @@ class AgoraMainWindow(QMainWindow):
         self.card_title.setText(detail.summary.request)
         self.card_location.setText(f"{detail.summary.state.value} / {detail.summary.filename}")
         self.card_agent.setText(detail.summary.agent or "Sin asignar")
+        self.card_blocked.setText(_blocked_label(detail.metadata))
         metadata = json.dumps(detail.metadata, ensure_ascii=False, indent=2, default=str)
         self.card_document.setPlainText(f"METADATOS\n{metadata}\n\nCUERPO\n{detail.body}")
         self.record_view.setPlainText(detail.record or "El Record todavía está vacío.")
+
+    def _clear_card(self, message: str) -> None:
+        self.card_title.setText("Selecciona una CARD")
+        self.card_location.setText("—")
+        self.card_agent.setText("—")
+        self.card_blocked.setText("—")
+        self.card_document.setPlainText(message)
+        self.record_view.setPlainText("")
 
     def _show_selected_profile(self) -> None:
         if self._snapshot is None:
@@ -339,7 +387,7 @@ class AgoraMainWindow(QMainWindow):
             f"{profile.description}\n\n"
             f"Función: {profile.function}\n"
             f"Handles: {', '.join(profile.handles) or '—'}\n"
-            f"Refuses: {', '.join(profile.refuses) or '—'}\n"
+            f"Rechaza: {', '.join(profile.refuses) or '—'}\n"
             f"Skills: {', '.join(profile.skills) or '—'}\n"
             f"Harness: {profile.harness or '—'}\n"
             f"Contrato: {profile.source}"
