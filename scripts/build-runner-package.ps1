@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Construye el paquete que se copia al PC IA para instalar el AI Runner.
 
@@ -63,15 +63,44 @@ try {
     New-Item -ItemType Directory -Force -Path $staging | Out-Null
     Copy-Item $wheel.FullName $staging
     Copy-Item (Join-Path $PSScriptRoot 'install-runner.ps1') $staging
+    Copy-Item (Join-Path $PSScriptRoot 'actualizar-runner.ps1') $staging
+    Copy-Item (Join-Path $PSScriptRoot 'Actualizar runner.bat') $staging
     Copy-Item (Join-Path $repo 'docs\INSTALAR_RUNNER.md') (Join-Path $staging 'INSTALAR.md')
+    # CA publica del Broker en HTTPS: la instala `actualizar-runner.ps1 -BrokerHttps` (la clave no sale de aqui)
+    $brokerCa = 'C:\Agora\pki-broker\ca.crt'
+    if (Test-Path -LiteralPath $brokerCa) { Copy-Item $brokerCa (Join-Path $staging 'broker-ca.crt') }
 
     $zip = Join-Path $repo "dist\agora-runner-$version.zip"
     Remove-Item $zip -ErrorAction SilentlyContinue
     Compress-Archive -Path "$staging\*" -DestinationPath $zip
     Remove-Item -Recurse -Force $staging
 
+    # Un solo fichero para el PC IA: el zip va dentro, en base64, detras de la marca. Copiarlo y
+    # hacer doble clic. La marca se escribe partida en la orden para que no se encuentre a si misma.
+    $single = Join-Path $repo "dist\Actualizar runner Agora $version.bat"
+    $header = @"
+@echo off
+rem Agora $version - actualiza el AI Runner de este PC IA.
+rem Copia SOLO este fichero al PC IA y haz doble clic: lleva dentro todo lo necesario.
+set "AGORA_PAQUETE=%TEMP%\agora-runner-$version"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "`$f=Get-Content -LiteralPath '%~f0' -Raw; `$m='::PAQ'+'UETE::'; `$b=`$f.Substring(`$f.IndexOf(`$m)+`$m.Length).Trim(); `$z=`$env:AGORA_PAQUETE+'.zip'; [IO.File]::WriteAllBytes(`$z,[Convert]::FromBase64String(`$b)); Remove-Item -Recurse -Force `$env:AGORA_PAQUETE -ErrorAction SilentlyContinue; Expand-Archive -Force `$z `$env:AGORA_PAQUETE"
+if errorlevel 1 (
+    echo No se pudo extraer el paquete que va dentro de este fichero.
+    pause
+    exit /b 1
+)
+powershell -NoProfile -ExecutionPolicy Bypass -File "%AGORA_PAQUETE%\actualizar-runner.ps1" %*
+echo.
+pause
+exit /b
+::PAQUETE::
+"@
+    Set-Content -Path $single -Value $header -Encoding ASCII
+    Add-Content -Path $single -Value ([Convert]::ToBase64String([IO.File]::ReadAllBytes($zip), 'InsertLineBreaks')) -Encoding ASCII
+
     Write-Host "`nPaquete listo: $zip" -ForegroundColor Green
-    Write-Host 'Copialo al PC IA y sigue INSTALAR.md.'
+    Write-Host "Para el PC IA basta con: $single" -ForegroundColor Green
+    Write-Host 'Copialo alli y haz doble clic (la primera instalacion sigue INSTALAR.md).'
 }
 finally {
     Pop-Location

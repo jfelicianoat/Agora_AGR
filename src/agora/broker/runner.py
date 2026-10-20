@@ -6,7 +6,8 @@ import base64
 import hashlib
 import json
 import tempfile
-from collections.abc import Callable
+import time
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -15,6 +16,7 @@ from typing import Any
 import httpx
 
 from agora.api.contracts import RunnerOutcome, WorkItem
+from agora.broker.ai_os_core import AgoraCoreGate, CoreUnavailable, denied_text
 from agora.broker.client import BrokerApiError, BrokerClient, BrokerTimeout
 from agora.broker.contracts import BrokerContractUnsupported
 from agora.broker.credentials import SessionTokenUnavailable
@@ -23,6 +25,7 @@ from agora.broker.executor import (
     BrokerExecutor,
     BrokerPolicyViolation,
     BrokerTaskFailed,
+    broker_idempotency_key,
 )
 from agora.broker.review_gate import audit_milestone
 from agora.cards import Card
@@ -39,11 +42,15 @@ class AiRunner:
     profiles: tuple[str, ...]
     attachment_wait_seconds: float = 5.0
     renew_broker: Callable[[], BrokerClient] | None = None
+    #: AI OS Core, si se configuró: decide qué tarjetas pueden ir al broker.
+    core: AgoraCoreGate | None = None
     # Adjuntos ya subidos, por tarjeta y digest. Un adjunto que tarda en
     # convertirse hace que el runner vuelva a sondear; sin esto se reenviaban
     # los bytes en cada vuelta. El broker deduplica por SHA-256, así que un
     # reinicio del runner cuesta una subida más, no un fichero huérfano.
     _uploads: dict[str, dict[str, str]] = field(default_factory=dict, repr=False)
+    # Cuándo se envió al Broker cada tarjeta en vuelo: latencia del salto en el monitor de Core.
+    _sent_at: dict[str, float] = field(default_factory=dict, repr=False)
 
     def run_once(self, *, now: datetime | None = None) -> RunnerOutcome:
         try:
@@ -79,6 +86,15 @@ class AiRunner:
         if not work:
             return RunnerOutcome(status="idle", detail="no compatible CARD available")
         selected = work[0]
+        if self.core is not None:
+            # Antes de reclamar: una tarjeta que Core no autoriza se queda en la cola
+            try:
+                allowed = self._first_allowed(work)
+            except CoreUnavailable as exc:
+                return RunnerOutcome(status="core_unavailable", detail=str(exc))
+            if isinstance(allowed, str):
+                return RunnerOutcome(status="core_denied", detail=allowed)
+            selected = allowed
         try:
             attachments = self._prepare_inputs(selected)
         except BrokerTimeout as exc:
@@ -100,9 +116,7 @@ class AiRunner:
         except AgoraApiError as exc:
             # Otro runner se la llevó primero: no es un fallo de esta tarjeta.
             if exc.status_code == 409:
-                return RunnerOutcome(
-                    status="lost_claim", card=selected.filename, detail=str(exc)
-                )
+                return RunnerOutcome(status="lost_claim", card=selected.filename, detail=str(exc))
             return RunnerOutcome(status="failed", card=selected.filename, detail=str(exc))
         return self._execute(selected, attachments, attempt)
 
@@ -152,11 +166,63 @@ class AiRunner:
                     status="broker_unavailable", card=work.filename, detail=str(exc)
                 )
             return self._close(work, execution, _attempt_prefix(self.runner_id, work))
+        if self.core is not None:
+            # Reclamada y sin enviar (el runner murió entre medias): Core decide igual
+            try:
+                allowed = self._first_allowed([work])
+            except CoreUnavailable as exc:
+                return RunnerOutcome(status="core_unavailable", card=work.filename, detail=str(exc))
+            if isinstance(allowed, str):
+                return self._yield_denied(work, allowed)
         try:
             attachments = self._prepare_inputs(work)
         except BrokerTimeout as exc:
             return RunnerOutcome(status="waiting_attachment", card=work.filename, detail=str(exc))
         return self._execute(work, attachments, _attempt_prefix(self.runner_id, work))
+
+    def _first_allowed(self, work: Sequence[WorkItem]) -> WorkItem | str:
+        """La primera tarjeta que Core autoriza, o por qué no autoriza ninguna."""
+        assert self.core is not None
+        reasons = []
+        for item in work:
+            policy = self.executor.policy_for_profile_name(item.profile)
+            decision = self.core.decide(
+                item.filename, item.profile, policy.data_classification, _flow(item)
+            )
+            if self.core.allows(decision):
+                return item
+            reasons.append(f"{item.filename}: {denied_text(decision)}")
+        return "; ".join(reasons)
+
+    def _yield_denied(self, work: WorkItem, reason: str) -> RunnerOutcome:
+        try:
+            self.agora.yield_card(
+                work.filename,
+                runner_id=self.runner_id,
+                reason=reason,
+                increment_attempts=False,  # no es un fallo de la tarjeta, es una política
+                idempotency_key=f"{_attempt_prefix(self.runner_id, work)}:core-denied",
+            )
+        except (httpx.HTTPError, AgoraApiError) as exc:
+            return RunnerOutcome(status="failed", card=work.filename, detail=str(exc))
+        return RunnerOutcome(status="core_denied", card=work.filename, detail=reason)
+
+    def _core_receipt(self, work: WorkItem, status: str, evidence: dict[str, Any]) -> None:
+        if self.core is not None:
+            evidence = {"card": work.filename, "flow_id": _flow(work), **evidence}
+            self.core.receipt(broker_idempotency_key(work), status, evidence)
+            # Monitor de Core: enviar la tarea es una petición al Broker; cerrarla, su respuesta
+            if status == "accepted":
+                self._sent_at[work.filename] = time.monotonic()
+                self.core.hop(
+                    _flow(work), "request", work.function[:200], {"profile": work.profile}
+                )
+            else:
+                began = self._sent_at.pop(work.filename, None)
+                if began is not None:
+                    evidence["latency_ms"] = int((time.monotonic() - began) * 1000)
+                kind = "response" if status == "succeeded" else "error"
+                self.core.hop(_flow(work), kind, status, evidence)
 
     def _execute(
         self,
@@ -176,11 +242,10 @@ class AiRunner:
                 },
                 idempotency_key=f"{attempt}:checkpoint",
             )
+            self._core_receipt(work, "accepted", {"task_id": task_id})
 
         def review_checkpoint(audit: dict[str, Any]) -> None:
-            digest = hashlib.sha256(
-                json.dumps(audit, sort_keys=True).encode("utf-8")
-            ).hexdigest()
+            digest = hashlib.sha256(json.dumps(audit, sort_keys=True).encode("utf-8")).hexdigest()
             self.agora.progress(
                 work.filename,
                 runner_id=self.runner_id,
@@ -231,6 +296,7 @@ class AiRunner:
         except (httpx.HTTPError, AgoraApiError) as exc:
             return RunnerOutcome(status="failed", card=work.filename, detail=str(exc))
         self._uploads.pop(work.filename, None)
+        self._core_receipt(work, "succeeded", {"model": execution.model})
         return RunnerOutcome(status="completed", card=work.filename)
 
     def _cancel_zombie(self, work: WorkItem, task_id: str) -> RunnerOutcome:
@@ -295,6 +361,7 @@ class AiRunner:
             )
         except (httpx.HTTPError, AgoraApiError) as exc:
             return RunnerOutcome(status="failed", card=work.filename, detail=str(exc))
+        self._core_receipt(work, "failed_terminal", {"reason": reason[:300]})
         return RunnerOutcome(status="failed", card=work.filename, detail=reason)
 
     def _prepare_inputs(self, work: WorkItem) -> tuple[dict[str, object], ...]:
@@ -315,6 +382,15 @@ class AiRunner:
                 wait_seconds=self.attachment_wait_seconds,
                 uploaded=self._uploads.setdefault(work.filename, {}),
             )
+
+
+def _flow(work: WorkItem) -> str:
+    """El flujo del monitor de Core: el de quien creó la tarjeta o, si no trae, el de la tarea.
+
+    Sin flujo propio se usa la clave de la tarea en el Broker, que es también la operación de
+    los recibos: así Core los cuelga del mismo flujo sin que nadie lo diga dos veces.
+    """
+    return work.flow_id or broker_idempotency_key(work)
 
 
 def _attempt_prefix(runner_id: str, work: WorkItem) -> str:

@@ -64,6 +64,8 @@ class RemoteWorkService:
         self.application.trust_origin(principal)
         if request.review_context is not None:
             card.metadata["review_context"] = request.review_context.model_dump(mode="json")
+        if request.flow_id:
+            card.metadata["flow_id"] = request.flow_id
         card.append_record("agora-api", [f"CARD accepted from authenticated client {principal}."])
         return self.board.create(request.filename, card)
 
@@ -149,6 +151,7 @@ class RemoteWorkService:
                     card_document=card.serialize(),
                     inputs=inputs,
                     board_id=self.application.instance_id,
+                    flow_id=str(card.metadata.get("flow_id") or ""),
                 )
             )
         return tuple(items)
@@ -327,6 +330,7 @@ class RemoteWorkService:
                     card_document=card.serialize(),
                     inputs=list(self._input_resources(card, path.name)),
                     board_id=self.application.instance_id,
+                    flow_id=str(card.metadata.get("flow_id") or ""),
                 )
             )
         return tuple(items)
@@ -405,9 +409,7 @@ def _plain_artifact_name(filename: str) -> str:
     return filename
 
 
-def _named_input_paths(
-    value: object, prefix: str = "input"
-) -> Iterator[tuple[str, Path]]:
+def _named_input_paths(value: object, prefix: str = "input") -> Iterator[tuple[str, Path]]:
     if isinstance(value, str) and value.strip():
         yield prefix, Path(value)
     elif isinstance(value, list):

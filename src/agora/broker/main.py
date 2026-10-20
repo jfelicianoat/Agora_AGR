@@ -11,12 +11,14 @@ from collections.abc import Callable
 from pathlib import Path
 
 from agora import __version__
+from agora.broker.ai_os_core import POLICY_SCOPE, AgoraCoreGate
 from agora.broker.client import BrokerClient
 from agora.broker.contracts import BrokerPolicy
 from agora.broker.credentials import (
     BrokerConnection,
     EnvironmentSessionToken,
     KeyringSessionToken,
+    SessionTokenSource,
     SessionTokenUnavailable,
 )
 from agora.broker.executor import BrokerExecutor
@@ -56,6 +58,11 @@ def _parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("--broker-port", type=int, default=8765)
+    parser.add_argument(
+        "--broker-ca-cert",
+        type=Path,
+        help="broker en HTTPS (https://127.0.0.1:<puerto>): CA que firma su certificado",
+    )
     parser.add_argument("--token-env", default="AGORA_API_TOKEN")
     parser.add_argument("--broker-token-env", default="AI_BROKER_ADMIN_TOKEN")
     parser.add_argument("--broker-keyring-service", default="ai-broker")
@@ -69,6 +76,14 @@ def _parser() -> argparse.ArgumentParser:
         "--review-gate-config", type=Path,
         help="configuración YAML del gate System-1 para tarjetas de revisión de resultados",
     )
+    parser.add_argument(
+        "--core-url",
+        help=(
+            "AI OS Core: sin su ALLOW no se reclama ninguna tarjeta, y el runner le publica "
+            "el token del broker para el resto de apps (opcional; https se valida con --ca-cert)"
+        ),
+    )
+    parser.add_argument("--core-token-env", default="AGORA_CORE_TOKEN")
     parser.add_argument("--once", action="store_true")
     parser.add_argument(
         "--check",
@@ -102,6 +117,16 @@ def _supervisor(args: argparse.Namespace) -> BrokerSupervisor:
     )
 
 
+def _share_broker_token(core: AgoraCoreGate, source: SessionTokenSource) -> None:
+    """Las apps del PC principal piden a Core el token del broker: el runner se lo da."""
+    try:
+        token = source.read()
+    except SessionTokenUnavailable:
+        return  # el broker aún no lo ha publicado: run_once lo dirá
+    if core.share_broker_token(token):
+        print("AI OS Core: token del broker publicado", file=sys.stderr)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     review_config = (
@@ -113,8 +138,10 @@ def main(argv: list[str] | None = None) -> int:
     if not agora_token:
         raise SystemExit(f"Missing Agora credential in environment variable {args.token_env}")
 
-    base_url = f"http://127.0.0.1:{args.broker_port}"
+    scheme = "https" if args.broker_ca_cert else "http"
+    base_url = f"{scheme}://127.0.0.1:{args.broker_port}"
     supervisor: BrokerSupervisor | None = None
+    token_source: SessionTokenSource | None = None
     if args.broker_credential == "supervise":
         supervisor = _supervisor(args)
         broker = supervisor.start()
@@ -126,13 +153,18 @@ def main(argv: list[str] | None = None) -> int:
             if args.broker_credential == "keyring"
             else EnvironmentSessionToken(args.broker_token_env)
         )
-        connection = BrokerConnection(source, base_url=base_url)
+        connection = BrokerConnection(
+            source,
+            base_url=base_url,
+            verify=str(args.broker_ca_cert.resolve()) if args.broker_ca_cert else True,
+        )
         try:
             broker = connection.connect()
         except SessionTokenUnavailable as exc:
             raise SystemExit(f"No local AI_Broker credential: {exc}") from exc
         connect = connection.connect
         origin = connection.origin
+        token_source = source
     print(f"AI_Broker credential source: {origin}", file=sys.stderr)
 
     policy = BrokerPolicy()
@@ -176,7 +208,17 @@ def main(argv: list[str] | None = None) -> int:
             args.runner_id,
             tuple(args.profile),
             renew_broker=connect,
+            core=(
+                AgoraCoreGate(
+                    args.core_url,
+                    os.environ.get(args.core_token_env),
+                    verify=str(args.ca_cert.resolve()),  # Core usa un certificado de la CA de Agora
+                )
+                if args.core_url else None
+            ),
         )
+        if runner.core is not None:
+            print(f"AI OS Core: {args.core_url} (política {POLICY_SCOPE})", file=sys.stderr)
         try:
             while True:
                 if supervisor is not None and not supervisor.running:
@@ -184,6 +226,8 @@ def main(argv: list[str] | None = None) -> int:
                     runner.broker.close()
                     runner.broker = replacement
                     runner.executor.client = replacement
+                if runner.core is not None and token_source is not None:
+                    _share_broker_token(runner.core, token_source)
                 outcome = runner.run_once()
                 print(outcome.model_dump_json())
                 if review_config.enabled:

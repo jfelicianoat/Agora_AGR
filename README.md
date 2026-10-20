@@ -94,3 +94,25 @@ agora-runner https://agora-host:8741 --runner-id worker-1 --profile summarizer -
 The API rejects plain HTTP, requires bearer authentication and idempotency keys for every
 mutation, validates names before filesystem use, and remains the only remote owner of
 BOARD writes. OAuth replaces the provisional shared credential in F5.
+
+## AI OS Core como director del runner (0.2.13)
+
+Opcional. Sin `--core-url` el runner `agora-ai-runner` funciona igual. Con
+`--core-url <url>` (token por app en `AGORA_CORE_TOKEN`, o la variable que diga
+`--core-token-env`), antes de reclamar una tarjeta el runner evalúa en AI OS Core la
+política `agora:broker` con `operation_type: card`, el perfil y la `data_classification`
+del PROFILE, y solo se lleva la primera tarjeta con ALLOW ejecutable:
+
+- denegada (DENY, aprobación pendiente o INDETERMINATE): se queda en `pending` sin gastar
+  intento; el resultado del ciclo es `core_denied`;
+- Core no contesta: no se reclama nada (`core_unavailable`);
+- una tarjeta ya reclamada y sin enviar (el runner murió entre medias) también pasa por
+  Core; si la deniega se suelta sin gastar intento;
+- cada tarea enviada deja recibos en Core con la misma clave de idempotencia que va al
+  broker: `accepted` al enviarla, `succeeded` al cerrar la tarjeta o `failed_terminal`.
+
+Despliegue: el runner vive en el PC IA, así que Core tiene que ser alcanzable desde allí
+(Core escucha en `127.0.0.1` por defecto). Recorrido real:
+`scripts/verify_ai_os_core.py <core> <token_agora> <token_director> <carpeta>` con
+`AI_BROKER_ADMIN_TOKEN` (9 comprobaciones, verde el 18-oct-2026 con
+`ollama/local/gemma4:12b`; tablero de usar y tirar, no toca el real).

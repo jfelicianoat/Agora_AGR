@@ -108,10 +108,14 @@ class BrokerConnection:
     source: SessionTokenSource
     base_url: str = "http://127.0.0.1:8765"
     timeout: float = 30.0
+    #: Broker en HTTPS: la CA que firma su certificado (la de Agora, por ruta).
+    verify: str | bool = True
     _factory: Callable[..., BrokerClient] = field(default=BrokerClient, repr=False)
 
     def connect(self) -> BrokerClient:
-        return self._factory(self.base_url, self.source.read(), timeout=self.timeout)
+        return self._factory(
+            self.base_url, self.source.read(), timeout=self.timeout, verify=self.verify
+        )
 
     @property
     def origin(self) -> str:

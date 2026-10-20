@@ -33,6 +33,11 @@ def _parser() -> argparse.ArgumentParser:
         default="keyring",
     )
     parser.add_argument("--broker-port", type=int, default=8765)
+    parser.add_argument(
+        "--broker-ca-cert",
+        type=Path,
+        help="broker en HTTPS (https://127.0.0.1:<puerto>): CA que firma su certificado",
+    )
     parser.add_argument("--broker-token-env", default="AI_BROKER_ADMIN_TOKEN")
     parser.add_argument("--broker-keyring-service", default="ai-broker")
     parser.add_argument("--broker-keyring-username", default="session_admin_token")
@@ -56,7 +61,8 @@ def main(argv: list[str] | None = None) -> int:
         args.oauth_signing_key.resolve().read_bytes(),
     )
 
-    base_url = f"http://127.0.0.1:{args.broker_port}"
+    scheme = "https" if args.broker_ca_cert else "http"
+    base_url = f"{scheme}://127.0.0.1:{args.broker_port}"
     supervisor: BrokerSupervisor | None = None
     if args.broker_credential == "supervise":
         if args.broker_repository is None or args.broker_config is None:
@@ -77,7 +83,7 @@ def main(argv: list[str] | None = None) -> int:
             ],
             repository,
             token_env=args.broker_token_env,
-            base_url=base_url,
+            base_url=f"http://127.0.0.1:{args.broker_port}",  # el hijo supervisado sirve HTTP
         )
         session = BrokerSession(supervisor.start(), renew=supervisor.restart)
     else:
@@ -86,7 +92,11 @@ def main(argv: list[str] | None = None) -> int:
             if args.broker_credential == "keyring"
             else EnvironmentSessionToken(args.broker_token_env)
         )
-        connection = BrokerConnection(source, base_url=base_url)
+        connection = BrokerConnection(
+            source,
+            base_url=base_url,
+            verify=str(args.broker_ca_cert.resolve()) if args.broker_ca_cert else True,
+        )
         try:
             session = BrokerSession(connection.connect(), renew=connection.connect)
         except SessionTokenUnavailable as exc:

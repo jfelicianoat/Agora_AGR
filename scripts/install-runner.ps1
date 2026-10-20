@@ -35,6 +35,11 @@ param(
     [string]$Wheel,
     [string]$PinSpki,
     [string]$ModelsCatalog,
+    # AI OS Core (opcional): decide qué tarjetas van al broker y ve cada una en su monitor.
+    # Su token por app llega por AGORA_CORE_TOKEN; nunca se escribe en runner.cmd.
+    [string]$CoreUrl,
+    # Broker en HTTPS: CA que firma su certificado (normalmente la misma que -CaCert).
+    [string]$BrokerCaCert,
     [int]$BrokerPort = 8765,
     [double]$PollSeconds = 15,
     [string]$PythonExe = "python",
@@ -139,6 +144,8 @@ $profileArgs = ($Profile | ForEach-Object { "--profile `"$_`"" }) -join ' '
 $optional = ''
 if ($PinSpki) { $optional += " --pin-spki `"$PinSpki`"" }
 if ($ModelsCatalog) { $optional += " --models `"$ModelsCatalog`"" }
+if ($CoreUrl) { $optional += " --core-url `"$CoreUrl`"" }
+if ($BrokerCaCert) { $optional += " --broker-ca-cert `"$BrokerCaCert`"" }
 
 function Get-RunnerArgs {
     param([string[]]$Extra = @())
@@ -153,6 +160,8 @@ function Get-RunnerArgs {
     )
     if ($PinSpki) { $arguments += @('--pin-spki', $PinSpki) }
     if ($ModelsCatalog) { $arguments += @('--models', $ModelsCatalog) }
+    if ($CoreUrl) { $arguments += @('--core-url', $CoreUrl) }
+    if ($BrokerCaCert) { $arguments += @('--broker-ca-cert', $BrokerCaCert) }
     return $arguments + $Extra
 }
 
@@ -180,9 +189,11 @@ if ($RegisterScheduledTask) {
     }
     $taskName = "Agora AI Runner ($RunnerId)"
     $wrapper = Join-Path $InstallDir 'runner-task.cmd'
+    $coreTokenLine = if ($env:AGORA_CORE_TOKEN) { "set AGORA_CORE_TOKEN=$env:AGORA_CORE_TOKEN" } else { 'rem sin AGORA_CORE_TOKEN' }
     @"
 @echo off
 set AGORA_API_TOKEN=$env:AGORA_API_TOKEN
+$coreTokenLine
 call "$launcher"
 "@ | Set-Content -Path $wrapper -Encoding ASCII
     # El fichero lleva un secreto: que solo lo lea quien corre la tarea.

@@ -333,3 +333,33 @@ def _wait_for_log(supervisor: BrokerSupervisor) -> None:
     while not supervisor.logs and time.monotonic() < deadline:
         time.sleep(0.01)
     assert supervisor.logs
+
+
+def test_broker_https_sigue_siendo_solo_loopback_y_lleva_la_ca(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agora.broker.credentials import BrokerConnection, EnvironmentSessionToken
+    from agora.broker.main import _parser
+
+    token = "secret-broker-token-0123456789"
+    with pytest.raises(ValueError, match="loopback"):
+        BrokerClient("https://192.168.1.52:8765", token)
+    seen: dict[str, object] = {}
+
+    def factory(base_url: str, admin_token: str, **kwargs: object) -> str:
+        seen.update(kwargs, base_url=base_url)
+        return "client"
+
+    ca = str(tmp_path / "ca.crt")
+    connection = BrokerConnection(
+        EnvironmentSessionToken("AGORA_TEST_BROKER_TOKEN"), base_url="https://127.0.0.1:8765",
+        verify=ca, _factory=factory,  # type: ignore[arg-type]
+    )
+    monkeypatch.setenv("AGORA_TEST_BROKER_TOKEN", token)
+    connection.connect()
+    assert seen["verify"] == ca and seen["base_url"] == "https://127.0.0.1:8765"
+    args = _parser().parse_args(
+        ["https://board", "--runner-id", "r", "--profile", "p", "--profiles-root", ".",
+         "--ca-cert", "ca.crt", "--broker-ca-cert", ca]
+    )
+    assert args.broker_ca_cert == Path(ca)

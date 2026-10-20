@@ -42,12 +42,14 @@ class BrokerClient:
     timeout: float = 30.0
     transport: httpx.BaseTransport | None = None
     sleep: Callable[[float], None] = time.sleep
+    #: Broker en HTTPS: la CA que firma su certificado (la de Agora, por ruta).
+    verify: str | bool = True
     _client: httpx.Client = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         parsed = urlparse(self.base_url)
-        if parsed.scheme != "http" or parsed.hostname not in _LOOPBACK_HOSTS:
-            raise ValueError("X-Admin-Token client is restricted to loopback HTTP")
+        if parsed.scheme not in ("http", "https") or parsed.hostname not in _LOOPBACK_HOSTS:
+            raise ValueError("X-Admin-Token client is restricted to loopback")
         if len(self.admin_token) < 16:
             raise ValueError("broker credential is unexpectedly short")
         self._client = httpx.Client(
@@ -55,6 +57,7 @@ class BrokerClient:
             headers={"X-Admin-Token": self.admin_token},
             timeout=self.timeout,
             transport=self.transport,
+            verify=self.verify,
         )
 
     def close(self) -> None:

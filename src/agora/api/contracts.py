@@ -79,6 +79,9 @@ class CreateCardRequest(StrictModel):
     body: str = Field(default="", max_length=100_000)
     external_reference: ExternalReference | None = None
     review_context: ReviewContext | None = None
+    #: Flujo del monitor de AI OS Core de quien deposita la tarjeta: el runner lo
+    #: continúa, así la petición se ve de punta a punta (cliente -> Agora -> Broker).
+    flow_id: str | None = Field(default=None, max_length=128, pattern=r"^[A-Za-z0-9_.:\-]+$")
 
 
 class ClaimRequest(StrictModel):
@@ -140,6 +143,8 @@ class WorkItem(BaseModel):
     # idempotencia del broker para que dos tableros con una tarjeta del mismo
     # nombre no colisionen. Vacío = tablero anterior a esta versión.
     board_id: str = ""
+    #: Flujo del monitor de AI OS Core que trae la tarjeta. Vacío = no viene de otra app.
+    flow_id: str = ""
 
 
 class StateResponse(BaseModel):
@@ -161,6 +166,9 @@ class RunnerOutcome(BaseModel):
         # El broker en marcha no puede prometer lo que la tarjeta exige
         # (p. ej. exclusividad de contenido en un contrato anterior al 2.10).
         "contract_unsupported",
+        # AI OS Core no autoriza ninguna tarjeta disponible, o no contesta: no se reclama nada.
+        "core_denied",
+        "core_unavailable",
     ]
     card: str | None = None
     detail: str = ""

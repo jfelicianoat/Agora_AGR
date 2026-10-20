@@ -177,7 +177,45 @@ usuario que corre la tarea. Si prefieres no dejarlo en disco, no uses
 
 ---
 
+## AI OS Core (opcional)
+
+Con AI OS Core el runner pregunta a Core antes de reclamar cada tarjeta (política
+`agora:broker`) y cada tarea se ve en vivo en el monitor de Core (`<core>/monitor`),
+continuando el flujo de la app que dejó la tarjeta (p. ej. Gestión Tareas IA → Agora →
+Broker). Si Core no contesta, el runner no reclama nada.
+
+1. En el PC del tablero, Core tiene que escuchar en la red (no sólo en `127.0.0.1`) y,
+   por eso mismo, con tokens: `AI_OS_API_TOKEN` (director) y en `AI_OS_API_TOKENS` uno
+   para el runner, `agora=<token>`. Arráncalo con `--host 0.0.0.0` y abre el puerto 8000
+   en el firewall de Windows sólo para la red local.
+2. En el PC IA, instala con `-CoreUrl` y deja el token en `AGORA_CORE_TOKEN`:
+
+   ```powershell
+   $env:AGORA_API_TOKEN  = "<token del tablero>"
+   $env:AGORA_CORE_TOKEN = "<token agora de Core>"
+   .\install-runner.ps1 -BoardUrl https://192.168.1.50:8741 -RunnerId ai-1 `
+       -Profile summarizer -ProfilesRoot C:\Agora\AGENTS -CaCert C:\Agora\ca.crt `
+       -CoreUrl http://192.168.1.50:8000 -RegisterScheduledTask
+   ```
+
+   Con `-RegisterScheduledTask`, `AGORA_CORE_TOKEN` queda también en `runner-task.cmd`
+   (con la misma ACL que el token del tablero).
+
+---
+
 ## Actualizar
+
+**Siempre igual, dos pasos:** copia al PC IA el fichero
+**`Actualizar runner Agora <versión>.bat`** (sale en `dist\` al construir el paquete) y haz
+doble clic. Lleva el paquete dentro: no hay que descomprimir nada. Si la tarea programada
+guarda los tokens, también hace el `--check` sin preguntar.
+
+Equivale a descomprimir el zip y hacer doble clic en **`Actualizar runner.bat`**. Lee la configuración del `runner.cmd` que ya tienes
+(tablero, id, PROFILEs, CA, anclaje, catálogo, AI OS Core…), para la tarea programada si
+existe, reinstala con el wheel nuevo, la vuelve a arrancar y te enseña la versión. Si antes
+defines `AGORA_API_TOKEN` (token del tablero) en esa consola, también pasa `--check`.
+
+A mano, lo mismo:
 
 Vuelve a ejecutar `install-runner.ps1` con el wheel nuevo: reinstala sobre el
 mismo venv y reescribe `runner.cmd`. La tarea programada no hace falta

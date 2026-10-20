@@ -156,9 +156,7 @@ def create_api(application: AgoraApplication, settings: ApiSettings) -> FastAPI:
         return {"cards": list(remote.find_by_external_reference(system, external_id))}
 
     @app.get("/api/v1/cards/{state_name}/{filename}")
-    def card(
-        state_name: BoardState, filename: str, _principal: CardsRead
-    ) -> dict[str, object]:
+    def card(state_name: BoardState, filename: str, _principal: CardsRead) -> dict[str, object]:
         return remote.card_payload(state_name, filename)
 
     @app.get("/api/v1/cards/{filename}")
@@ -299,8 +297,10 @@ def create_api(application: AgoraApplication, settings: ApiSettings) -> FastAPI:
     ) -> JSONResponse:
         key = _required_key(idempotency_key)
         body = request.model_dump(mode="json")
-        if request.review_context is None:
-            body.pop("review_context")
+        # Campos añadidos después: ausentes, no cambian la huella de una petición antigua repetida
+        for added in ("review_context", "flow_id"):
+            if body.get(added) is None:
+                body.pop(added)
         digest = idempotency.digest(body)
         with operation_lock:
             cached = idempotency.lookup("create", key, digest)
@@ -431,9 +431,7 @@ def create_api(application: AgoraApplication, settings: ApiSettings) -> FastAPI:
             operation_lock,
             idempotency,
             events,
-            lambda: remote.cancel(
-                filename, principal=authenticated.subject, reason=request.reason
-            ),
+            lambda: remote.cancel(filename, principal=authenticated.subject, reason=request.reason),
             BoardState.ARCHIVE,
             "card.cancelled",
         )
