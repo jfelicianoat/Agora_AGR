@@ -12,6 +12,17 @@ from agora.profiles import Profile
 from agora.skills import Skill
 
 
+def broker_priority(card_score: int, app_priority: int | None = None) -> int:
+    """Turno en la cola del Broker (Client_API 5.1.1: menor = antes) de una tarjeta.
+
+    En el tablero es al revés (mayor = más urgente: normal 100, urgent 1000). La base es el
+    turno que AI OS Core fija a Agora en su monitor (sin él, el normal del Broker, 100); una
+    tarjeta normal va justo en la base y una urgente, en la décima parte.
+    """
+    base = 100 if app_priority is None else app_priority
+    return min(1000, max(0, round(base * 100 / max(card_score, 1))))
+
+
 def build_broker_request(
     profile: Profile,
     skills: tuple[Skill, ...],
@@ -21,6 +32,7 @@ def build_broker_request(
     idempotency_key: str,
     attachments: tuple[dict[str, Any], ...] = (),
     contract: BrokerCapabilities | None = None,
+    app_priority: int | None = None,
 ) -> dict[str, Any]:
     profile_contract = render_markdown_document(profile.metadata, profile.body).strip()
     skill_contracts = "\n\n".join(
@@ -74,7 +86,7 @@ def build_broker_request(
             "timeout_seconds": policy.timeout_seconds,
         },
         "risk": {"data_classification": policy.data_classification},
-        "priority": min(1000, max(0, card.priority_score)),
+        "priority": broker_priority(card.priority_score, app_priority),
         "prompt_compression": "off",
         "exclude_from_model_learning": False,
     }

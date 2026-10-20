@@ -151,6 +151,8 @@ class BrokerExecutor:
     # los perfiles comparten `policy`, que es como se comportaba antes.
     catalog: ModelCatalog | None = None
     review_gate: ReviewGate = field(default_factory=ReviewGate)
+    #: Turno de Agora en la cola del Broker que fija AI OS Core (lo pone el runner al decidir).
+    app_priority: int | None = None
 
     def policy_for(self, profile: Profile) -> BrokerPolicy:
         if self.catalog is None:
@@ -242,6 +244,7 @@ class BrokerExecutor:
             idempotency_key=key,
             attachments=attachments,
             contract=contract,
+            app_priority=self.app_priority,
         )
         task_id = self.client.submit(payload)
         checkpoint(task_id, key)

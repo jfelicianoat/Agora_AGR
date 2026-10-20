@@ -190,6 +190,8 @@ class AiRunner:
                 item.filename, item.profile, policy.data_classification, _flow(item)
             )
             if self.core.allows(decision):
+                priority = decision.get("broker_priority")
+                self.executor.app_priority = priority if isinstance(priority, int) else None
                 return item
             reasons.append(f"{item.filename}: {denied_text(decision)}")
         return "; ".join(reasons)
