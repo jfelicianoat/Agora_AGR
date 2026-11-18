@@ -198,7 +198,7 @@ def test_a_corrected_contract_is_seen_without_restarting(
 def test_the_whole_flow_a_client_needs(
     integracion: tuple[AgoraApplication, TestClient],
 ) -> None:
-    application, client = integracion
+    _, client = integracion
 
     creada = client.post(
         "/api/v1/cards",

@@ -231,7 +231,7 @@ def test_knowing_a_reference_grants_nothing_without_credentials(
     cliente: tuple[AgoraApplication, TestClient],
 ) -> None:
     """Lo que da acceso es el token, no saberse el identificador."""
-    application, client = cliente
+    _, client = cliente
     _crear(client, external_reference=REFERENCIA)
     sin_credenciales = TestClient(
         client.app, base_url="https://testserver"  # type: ignore[arg-type]

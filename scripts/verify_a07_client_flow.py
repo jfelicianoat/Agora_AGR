@@ -122,7 +122,7 @@ def main() -> int:
     )
     comprobar("misma clave con otro cuerpo es 409", status == 409, str(conflicto)[:90])
 
-    status, sin_clave = call("POST", "/api/v1/cards", dict(peticion, filename="x-" + filename))
+    status, _ = call("POST", "/api/v1/cards", dict(peticion, filename="x-" + filename))
     comprobar("sin clave de idempotencia se rechaza", status in {400, 422}, str(status))
 
     print("\n=== 4. El origen: la tarjeta de un cliente autenticado se despacha ===")
@@ -156,7 +156,9 @@ def main() -> int:
     status, contenido = call("GET", f"/api/v1/cards/{filename}/artifacts/0")
     comprobar("el artefacto se descarga", status == 200, str(status))
     texto = contenido if isinstance(contenido, str) else (
-        contenido.decode("utf-8", "replace") if isinstance(contenido, bytes) else json.dumps(contenido)
+        contenido.decode("utf-8", "replace")
+        if isinstance(contenido, bytes)
+        else json.dumps(contenido)
     )
 
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -191,7 +193,7 @@ def main() -> int:
     otro = f"a07-cancelar-{uuid.uuid4().hex[:8]}.md"
     call("POST", "/api/v1/cards", dict(peticion, filename=otro), key=str(uuid.uuid4()))
     clave_cancel = str(uuid.uuid4())
-    status, _ = call(
+    status, cancelada = call(
         "POST", f"/api/v1/cards/{otro}/cancel", {"reason": "prueba de A07"}, key=clave_cancel
     )
     comprobar("cancelar responde 200", status == 200, str(status))
@@ -200,7 +202,14 @@ def main() -> int:
     status, repetida = call(
         "POST", f"/api/v1/cards/{otro}/cancel", {"reason": "prueba de A07"}, key=clave_cancel
     )
-    comprobar("cancelar dos veces con la misma clave da lo mismo", status == 200)
+    sin_marca = {k: v for k, v in repetida.items() if k != "replayed"}
+    comprobar(
+        "cancelar dos veces con la misma clave da lo mismo",
+        status == 200
+        and repetida.get("replayed") is True
+        and sin_marca == {k: v for k, v in cancelada.items() if k != "replayed"},
+        str(repetida)[:90],
+    )
 
     print("\n=== 8. Errores ===")
     status, _ = call("GET", "/api/v1/cards/no-existe-jamas.md")

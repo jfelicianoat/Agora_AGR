@@ -215,7 +215,9 @@ def _load_one(path: Path) -> OutputContract:
 
     problems = validate_payload(schema, example)
     if problems:
-        raise ContractError(f"{path}: el ejemplo no cumple su propio esquema: " + "; ".join(problems))
+        raise ContractError(
+            f"{path}: el ejemplo no cumple su propio esquema: " + "; ".join(problems)
+        )
 
     return OutputContract(
         name=name,
@@ -338,7 +340,10 @@ def _walk_objects(schema: dict[str, Any], where: str):
             yield here, node
             yield from _walk_objects(node, here)
         items = node.get("items")
-        if node.get("type") == "array" and isinstance(items, dict):
-            if items.get("type") == "object":
-                yield f"{here}[]", items
-                yield from _walk_objects(items, f"{here}[]")
+        if (
+            node.get("type") == "array"
+            and isinstance(items, dict)
+            and items.get("type") == "object"
+        ):
+            yield f"{here}[]", items
+            yield from _walk_objects(items, f"{here}[]")

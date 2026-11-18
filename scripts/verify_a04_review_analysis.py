@@ -12,23 +12,23 @@ No basta con que el JSON valide. Lo que hay que ver es si el modelo:
 from __future__ import annotations
 
 import json
-from dataclasses import replace
 import os
 import sys
 import time
 import urllib.error
 import urllib.request
+from dataclasses import replace
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from agora.broker.contracts import BrokerPolicy  # noqa: E402
-from agora.broker.executor import apply_skill_output_contract  # noqa: E402
-from agora.broker.request_builder import build_broker_request  # noqa: E402
-from agora.cards import Card  # noqa: E402
-from agora.output_contract import OutputContractError, enforce  # noqa: E402
-from agora.profiles import Profile  # noqa: E402
-from agora.skills import load_profile_skills  # noqa: E402
+from agora.broker.contracts import BrokerPolicy
+from agora.broker.executor import apply_skill_output_contract
+from agora.broker.request_builder import build_broker_request
+from agora.cards import Card
+from agora.output_contract import OutputContractError, enforce
+from agora.profiles import Profile
+from agora.skills import load_profile_skills
 
 BROKER = "http://192.168.1.52:8765"
 TOKEN = os.environ.get("BROKER_TOKEN", "llt0WeZ0YtPgGm62Y9fhnDvWrDvfoDaZ")
@@ -110,7 +110,8 @@ def main() -> int:
         idempotency_key=f"verify-a04-{int(time.time())}",
     )
     print(f"perfil {profile.name}@{profile.version} / skill {skill.name}@{skill.version}")
-    print(f"output enviado: {request['output']} / modelo: {policy.target_model or 'enrutado por el broker'}")
+    modelo = policy.target_model or "enrutado por el broker"
+    print(f"output enviado: {request['output']} / modelo: {modelo}")
 
     submitted = post("/v1/tasks", request)
     task_id = submitted.get("task_id") or submitted.get("id")
@@ -230,7 +231,8 @@ def main() -> int:
     print(f"rastros de agenda (fuera de las citas): {horas}")
 
     print(f"trabajo descubierto: {[w['title'] for w in payload['discovered_work']]}")
-    print(f"dependencias: {[(d['blocked'], d['depends_on']) for d in payload['proposed_dependencies']]}")
+    dependencias = [(d["blocked"], d["depends_on"]) for d in payload["proposed_dependencies"]]
+    print(f"dependencias: {dependencias}")
 
     ok = (
         not falsos

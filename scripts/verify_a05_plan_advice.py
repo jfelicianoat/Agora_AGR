@@ -15,22 +15,22 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import time
-import re
 import urllib.request
 from dataclasses import replace
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from agora.broker.contracts import BrokerPolicy  # noqa: E402
-from agora.broker.executor import apply_skill_output_contract  # noqa: E402
-from agora.broker.request_builder import build_broker_request  # noqa: E402
-from agora.cards import Card  # noqa: E402
-from agora.output_contract import OutputContractError, enforce  # noqa: E402
-from agora.profiles import Profile  # noqa: E402
-from agora.skills import load_profile_skills  # noqa: E402
+from agora.broker.contracts import BrokerPolicy
+from agora.broker.executor import apply_skill_output_contract
+from agora.broker.request_builder import build_broker_request
+from agora.cards import Card
+from agora.output_contract import OutputContractError, enforce
+from agora.profiles import Profile
+from agora.skills import load_profile_skills
 
 BROKER = "http://192.168.1.52:8765"
 TOKEN = os.environ.get("BROKER_TOKEN", "llt0WeZ0YtPgGm62Y9fhnDvWrDvfoDaZ")
@@ -167,7 +167,8 @@ def run(name: str, card_text: str, skill, profile, pinned: str | None) -> bool:
 
     print("\n--- LO QUE IMPORTA ---")
     print(f"advice_only: {payload['advice_only']}")
-    print(f"orden: {[(e['position'], e['item']) for e in sorted(payload['sequence'], key=lambda e: e['position'])]}")
+    secuencia = sorted(payload["sequence"], key=lambda e: e["position"])
+    print(f"orden: {[(e['position'], e['item']) for e in secuencia]}")
     sin_razon = [e for e in payload["sequence"] if not e["why"].strip()]
     print(f"posiciones sin razon: {len(sin_razon)}")
 

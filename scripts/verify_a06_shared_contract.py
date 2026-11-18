@@ -23,13 +23,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from agora.broker.contracts import BrokerPolicy  # noqa: E402
-from agora.broker.executor import apply_skill_output_contract  # noqa: E402
-from agora.broker.request_builder import build_broker_request  # noqa: E402
-from agora.cards import Card  # noqa: E402
-from agora.output_contract import OutputContractError, enforce  # noqa: E402
-from agora.profiles import Profile  # noqa: E402
-from agora.skills import load_profile_skills  # noqa: E402
+from agora.broker.contracts import BrokerPolicy
+from agora.broker.executor import apply_skill_output_contract
+from agora.broker.request_builder import build_broker_request
+from agora.cards import Card
+from agora.output_contract import OutputContractError, enforce
+from agora.profiles import Profile
+from agora.skills import load_profile_skills
 
 BROKER = "http://192.168.1.52:8765"
 TOKEN = os.environ.get("BROKER_TOKEN", "llt0WeZ0YtPgGm62Y9fhnDvWrDvfoDaZ")
@@ -140,8 +140,10 @@ def run(name: str, titulo: str, cuerpo: str, profile, skills, pinned) -> bool:
     suma = sum(estimados)
     sin_criterio = [s["order"] for s in steps if not s.get("completion_criteria", "").strip()]
     dep_malas = [d for s in steps for d in s.get("depends_on", []) if d not in ordenes]
-    fechas = re.findall(r"\b(20\d\d-\d\d-\d\d|lunes|martes|miercoles|jueves|viernes|\d{1,2}:\d{2})\b",
-                        json.dumps(payload, ensure_ascii=False).lower())
+    fechas = re.findall(
+        r"\b(20\d\d-\d\d-\d\d|lunes|martes|miercoles|jueves|viernes|\d{1,2}:\d{2})\b",
+        json.dumps(payload, ensure_ascii=False).lower(),
+    )
 
     print(f"kind declarado: {payload.get('kind')!r}")
     print(f"contrato: {payload['contract']}@{payload['contract_version']}")

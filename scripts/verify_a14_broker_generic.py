@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 import sys
 import time
 import urllib.error
@@ -20,13 +19,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from agora.broker.contracts import BrokerPolicy  # noqa: E402
-from agora.broker.executor import apply_skill_output_contract  # noqa: E402
-from agora.broker.request_builder import build_broker_request  # noqa: E402
-from agora.cards import Card  # noqa: E402
-from agora.output_contract import OutputContractError, enforce  # noqa: E402
-from agora.profiles import Profile  # noqa: E402
-from agora.skills import load_profile_skills  # noqa: E402
+from agora.broker.contracts import BrokerPolicy
+from agora.broker.executor import apply_skill_output_contract
+from agora.broker.request_builder import build_broker_request
+from agora.cards import Card
+from agora.output_contract import OutputContractError, enforce
+from agora.profiles import Profile
+from agora.skills import load_profile_skills
 
 BROKER = "http://192.168.1.52:8765"
 TOKEN = os.environ.get("BROKER_TOKEN", "llt0WeZ0YtPgGm62Y9fhnDvWrDvfoDaZ")
@@ -178,7 +177,6 @@ def main() -> int:
         comprobar(f"{nombre}: el sobre es generico", not sucio, str(sucio))
 
     print("\n=== 5. Lo que el broker anuncia, sin extensiones nuestras ===")
-    contrato = post("/v1/meta/capabilities") if False else None
     print("    (no se consulta: Agora no pide ninguna extension)")
 
     print(f"\n{'=' * 62}")

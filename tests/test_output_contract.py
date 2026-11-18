@@ -14,16 +14,15 @@ import pytest
 
 from agora.broker.contracts import BrokerPolicy
 from agora.broker.executor import BrokerPolicyViolation, _enforce_output_contract
+from agora.contracts import ContractRegistry
+from agora.errors import SkillFormatError
 from agora.output_contract import (
     OutputContractError,
     enforce,
     extract_json,
     validate_payload,
 )
-from agora.errors import SkillFormatError
 from agora.skills import Skill
-
-from agora.contracts import ContractRegistry
 
 PROFILES_ROOT = Path(__file__).resolve().parents[1] / "profiles" / "task-planning"
 REGISTRY = ContractRegistry.discover(PROFILES_ROOT)

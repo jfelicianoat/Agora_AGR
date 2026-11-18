@@ -91,7 +91,7 @@ def test_card_urgency_goes_to_the_broker_with_its_scale_and_the_core_turn() -> N
 
     # Tablero: mayor = más urgente. Broker: menor = antes.
     assert [broker_priority(s) for s in (1000, 500, 100, 50)] == [10, 20, 100, 200]
-    assert broker_priority(0) == 1000 and broker_priority(7) == 1000  # nunca fuera de 0–1000
+    assert broker_priority(0) == 1000 and broker_priority(7) == 1000  # nunca fuera de 0-1000
     # El turno del monitor de Core es la base: una normal va en él, una urgente antes
     assert broker_priority(100, 500) == 500 and broker_priority(1000, 500) == 50
     assert broker_priority(100, 0) == 0
