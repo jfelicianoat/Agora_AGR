@@ -27,3 +27,11 @@ class ClaimConflict(AgoraError):
 
 class InvalidTransition(AgoraError):
     """A board state transition is not permitted."""
+
+
+class BoardBusy(AgoraError):
+    """Otro proceso tiene el candado del tablero; reintentar en un momento.
+
+    No es un conflicto de estado: el API lo devuelve como 503 con `Retry-After`
+    para que un cliente no lo confunda con «esa transición no vale» (B-3).
+    """

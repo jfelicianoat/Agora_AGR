@@ -3,17 +3,23 @@
 from __future__ import annotations
 
 import json
+from collections import Counter
+from collections.abc import Callable
+from pathlib import Path
 from typing import Protocol
 
-from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QAction, QColor, QFont
+from PySide6.QtCore import Qt, QTimer, QUrl
+from PySide6.QtGui import QAction, QColor, QDesktopServices, QFont
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
     QFormLayout,
     QFrame,
+    QHBoxLayout,
+    QInputDialog,
     QLabel,
     QMainWindow,
+    QMessageBox,
     QPlainTextEdit,
     QPushButton,
     QSplitter,
@@ -76,12 +82,66 @@ def _blocked_label(metadata: dict[str, object]) -> str:
     return f"{reason} ({code})" if code else reason
 
 
+_SITUATIONS = {
+    BoardState.IN_PROGRESS: "En curso: un ejecutor la tiene reclamada",
+    BoardState.DONE: "Terminada: su resultado se abre con «Abrir resultado»",
+    BoardState.BLOCKED: "Parada hasta que alguien la desbloquee",
+    BoardState.SCHEDULED: "Plantilla: crea una tarjeta en Pendientes cada periodo",
+    BoardState.ARCHIVE: "Archivada: no se ejecutará",
+}
+
+
 class DesktopService(Protocol):
     def snapshot(self) -> AgoraSnapshot: ...
 
     def card_detail(self, state: BoardState, filename: str) -> CardDetail: ...
 
     def dispatch_once(self, *, dry_run: bool = False) -> tuple[DispatchOutcome, ...]: ...
+
+    def unblock(self, filename: str, reason: str) -> Path: ...
+
+    def cancel(self, filename: str, reason: str) -> Path: ...
+
+    def artifacts(self, state: BoardState, filename: str) -> tuple[Path, ...]: ...
+
+    def explain(self, filename: str) -> str: ...
+
+    def open_target(self, path: Path) -> Path: ...
+
+
+def _ask_reason(parent: QWidget, title: str, label: str, default: str) -> str | None:
+    text, accepted = QInputDialog.getText(parent, title, label, text=default)
+    return text if accepted else None
+
+
+def _confirm(parent: QWidget, title: str, text: str) -> bool:
+    answer = QMessageBox.question(parent, title, text)
+    return answer == QMessageBox.StandardButton.Yes
+
+
+def _summary(outcomes: tuple[DispatchOutcome, ...], dry_run: bool) -> str:
+    """Lo que hizo la ronda, en una línea (U-03). Antes sólo quedaba en Actividad."""
+    name = "Ronda simulada" if dry_run else "Ronda"
+    if not outcomes:
+        return f"{name}: nada que hacer"
+    counts = Counter(_ROUND_WORDS.get(item.status.value, item.status.value) for item in outcomes)
+    detail = ", ".join(f"{count} {word}" for word, count in counts.most_common())
+    return f"{name}: {detail}"
+
+
+_ROUND_WORDS = {
+    "dispatched": "ejecutada(s)",
+    "would_dispatch": "se ejecutaría(n)",
+    "waiting_input": "esperando entradas",
+    "unmatched": "sin perfil",
+    "ambiguous": "ambigua(s)",
+    "blocked": "parada(s)",
+    "skipped": "para el runner de IA u otro ejecutor",
+    "conflict": "en conflicto",
+    "error": "con error",
+    "recovered": "rescatada(s)",
+    "materialized": "programada(s) creada(s)",
+}
 
 
 class AgoraMainWindow(QMainWindow):
@@ -94,6 +154,14 @@ class AgoraMainWindow(QMainWindow):
         super().__init__()
         self.service = service
         self._snapshot: AgoraSnapshot | None = None
+        #: Diálogos sustituibles en pruebas: un modal real bloquearía el arnés.
+        self.ask_reason: Callable[[str, str, str], str | None] = (
+            lambda title, label, default: _ask_reason(self, title, label, default)
+        )
+        self.confirm: Callable[[str, str], bool] = lambda title, text: _confirm(self, title, text)
+        self.open_path: Callable[[Path], bool] = lambda path: QDesktopServices.openUrl(
+            QUrl.fromLocalFile(str(path))
+        )
         self.setObjectName("agoraMainWindow")
         self.setWindowTitle(f"Agora Desktop {__version__}")
         self.resize(1240, 780)
@@ -117,9 +185,15 @@ class AgoraMainWindow(QMainWindow):
 
         self.dry_run = QCheckBox("Simular")
         self.dry_run.setObjectName("dryRunCheck")
+        self.dry_run.setToolTip("Enseña qué haría la ronda sin mover ninguna tarjeta.")
         toolbar.addWidget(self.dry_run)
         dispatch_button = QPushButton("Ejecutar ronda")
         dispatch_button.setObjectName("dispatchButton")
+        dispatch_button.setToolTip(
+            "Rescata tarjetas abandonadas, crea las programadas que tocan y ejecuta aquí "
+            "sólo los perfiles locales. Las tarjetas de IA no se tocan: las recoge el "
+            "runner del PC IA a través de Agora Tablero."
+        )
         dispatch_button.clicked.connect(self.run_dispatcher)
         toolbar.addWidget(dispatch_button)
 
@@ -127,6 +201,10 @@ class AgoraMainWindow(QMainWindow):
         self.dispatcher_badge.setObjectName("dispatcherStatus")
         toolbar.addSeparator()
         toolbar.addWidget(self.dispatcher_badge)
+        self.round_summary = QLabel("")
+        self.round_summary.setObjectName("roundSummary")
+        toolbar.addSeparator()
+        toolbar.addWidget(self.round_summary)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.setChildrenCollapsible(False)
@@ -182,7 +260,31 @@ class AgoraMainWindow(QMainWindow):
         form.addRow("Ubicación", self.card_location)
         form.addRow("Agente", self.card_agent)
         form.addRow("Bloqueo", self.card_blocked)
+        self.card_situation = QLabel("—")
+        self.card_situation.setObjectName("cardSituation")
+        self.card_situation.setWordWrap(True)
+        form.addRow("Situación", self.card_situation)
         layout.addWidget(identity)
+        actions = QHBoxLayout()
+        self.unblock_button = QPushButton("Desbloquear…")
+        self.unblock_button.setObjectName("unblockButton")
+        self.unblock_button.setToolTip(
+            "Devuelve la tarjeta a Pendientes. Si agotó sus intentos, le da otros tantos."
+        )
+        self.unblock_button.clicked.connect(self.unblock_selected)
+        self.cancel_button = QPushButton("Cancelar…")
+        self.cancel_button.setObjectName("cancelButton")
+        self.cancel_button.setToolTip("Archiva la tarjeta como cancelada. No se ejecutará.")
+        self.cancel_button.clicked.connect(self.cancel_selected)
+        self.open_button = QPushButton("Abrir resultado")
+        self.open_button.setObjectName("openArtifactButton")
+        self.open_button.setToolTip("Abre el fichero que produjo la tarjeta.")
+        self.open_button.clicked.connect(self.open_selected_artifact)
+        for button in (self.unblock_button, self.cancel_button, self.open_button):
+            button.setEnabled(False)
+            actions.addWidget(button)
+        actions.addStretch(1)
+        layout.addLayout(actions)
         self.card_document = QPlainTextEdit()
         self.card_document.setObjectName("cardDocument")
         self.card_document.setReadOnly(True)
@@ -260,15 +362,19 @@ class AgoraMainWindow(QMainWindow):
         total = len(snapshot.cards)
         blocked = len(snapshot.cards_in(BoardState.BLOCKED))
         self.statusBar().showMessage(
+            f"Agora {__version__} · "
             f"{total} CARD{'s' if total != 1 else ''} · {blocked} bloqueada(s) · "
             f"actualizado {snapshot.captured_at}"
         )
 
     def run_dispatcher(self) -> None:
         self.dispatcher_badge.setText("Despachador: ejecutando…")
+        dry = self.dry_run.isChecked()
         try:
-            self.service.dispatch_once(dry_run=self.dry_run.isChecked())
+            outcomes = self.service.dispatch_once(dry_run=dry)
+            self.round_summary.setText(_summary(outcomes, dry))
         except Exception as exc:
+            self.round_summary.setText("La ronda falló: mira la pestaña Errores")
             self.error_summary.setText("Fallo del dispatcher")
             self.error_view.setPlainText(f"{type(exc).__name__}: {exc}")
             container = self.error_view.parentWidget()
@@ -351,9 +457,74 @@ class AgoraMainWindow(QMainWindow):
             self.card_blocked.setText("—")
             self.card_document.setPlainText(f"CARD ilegible\n\n{type(exc).__name__}: {exc}")
             self.record_view.setPlainText("No se puede mostrar el Record.")
+            self.card_situation.setText("—")
+            self._update_actions(None, False)
             self.tabs.setCurrentIndex(0)
             return
         self._show_card(detail)
+
+    def unblock_selected(self) -> None:
+        key = self._selected_card_key()
+        if key is None or key[0] is not BoardState.BLOCKED:
+            return
+        filename = key[1]
+        reason = self.ask_reason(
+            "Desbloquear", f"Motivo para reintentar {filename} (queda en su Record):", "Reintentar"
+        )
+        if reason is None:
+            return
+        self._act(lambda: self.service.unblock(filename, reason), f"{filename} vuelve a Pendientes")
+
+    def cancel_selected(self) -> None:
+        key = self._selected_card_key()
+        if key is None or key[0] not in {BoardState.PENDING, BoardState.IN_PROGRESS}:
+            return
+        state, filename = key
+        warning = (
+            "\n\nEstá en curso: el runner perderá el trabajo que esté haciendo."
+            if state is BoardState.IN_PROGRESS
+            else ""
+        )
+        if not self.confirm("Cancelar tarjeta", f"¿Cancelar {filename}? Irá al Archivo.{warning}"):
+            return
+        reason = self.ask_reason("Cancelar", "Motivo (queda en su Record):", "Cancelada a mano")
+        if reason is None:
+            return
+        self._act(lambda: self.service.cancel(filename, reason), f"{filename} cancelada")
+
+    def open_selected_artifact(self) -> None:
+        key = self._selected_card_key()
+        if key is None:
+            return
+        try:
+            paths = self.service.artifacts(*key)
+        except Exception as exc:
+            self.round_summary.setText(f"No se pudo leer la tarjeta: {exc}")
+            return
+        if not paths:
+            self.round_summary.setText("Esta tarjeta no tiene resultados en disco.")
+            return
+        target = self.service.open_target(paths[0])
+        if target != paths[0]:
+            self.round_summary.setText(
+                f"{paths[0].name} no es un documento: se abre su carpeta en vez de ejecutarlo"
+            )
+        if not self.open_path(target):
+            self.round_summary.setText(f"Windows no pudo abrir {target}")
+
+    def _act(self, action: Callable[[], Path], done: str) -> None:
+        try:
+            action()
+        except Exception as exc:
+            self.round_summary.setText(f"No se pudo: {exc}")
+            return
+        self.round_summary.setText(done)
+        self.refresh()
+
+    def _update_actions(self, state: BoardState | None, has_artifacts: bool) -> None:
+        self.unblock_button.setEnabled(state is BoardState.BLOCKED)
+        self.cancel_button.setEnabled(state in {BoardState.PENDING, BoardState.IN_PROGRESS})
+        self.open_button.setEnabled(has_artifacts)
 
     def _show_card(self, detail: CardDetail) -> None:
         self.card_title.setText(detail.summary.request)
@@ -363,14 +534,31 @@ class AgoraMainWindow(QMainWindow):
         metadata = json.dumps(detail.metadata, ensure_ascii=False, indent=2, default=str)
         self.card_document.setPlainText(f"METADATOS\n{metadata}\n\nCUERPO\n{detail.body}")
         self.record_view.setPlainText(detail.record or "El Record todavía está vacío.")
+        state = detail.summary.state
+        if state is BoardState.PENDING:
+            try:
+                situation = self.service.explain(detail.summary.filename)
+            except Exception as exc:
+                situation = f"No se pudo calcular: {exc}"
+        else:
+            situation = _SITUATIONS[state]
+        self.card_situation.setText(situation)
+        # La misma regla que «Abrir resultado»: sólo ficheros dentro del workspace.
+        try:
+            has_artifacts = bool(self.service.artifacts(state, detail.summary.filename))
+        except Exception:
+            has_artifacts = False
+        self._update_actions(state, has_artifacts)
 
     def _clear_card(self, message: str) -> None:
         self.card_title.setText("Selecciona una CARD")
         self.card_location.setText("—")
         self.card_agent.setText("—")
         self.card_blocked.setText("—")
+        self.card_situation.setText("—")
         self.card_document.setPlainText(message)
         self.record_view.setPlainText("")
+        self._update_actions(None, False)
 
     def _show_selected_profile(self) -> None:
         if self._snapshot is None:
@@ -411,6 +599,7 @@ class AgoraMainWindow(QMainWindow):
             QPushButton { background: #4d7cff; color: white; border: 0; border-radius: 5px;
                           padding: 7px 14px; font-weight: 600; }
             QPushButton:hover { background: #638cff; }
+            QPushButton:disabled { background: #2a2f3a; color: #6f7787; }
             QTreeWidget, QTableWidget, QPlainTextEdit {
                 background: #20242d; border: 1px solid #303642; border-radius: 6px;
                 selection-background-color: #365a9d; padding: 4px;

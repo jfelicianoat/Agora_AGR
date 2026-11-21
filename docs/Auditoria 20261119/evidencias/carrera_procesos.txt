@@ -1,0 +1,1 @@
+tarjetas: 40 en dos carpetas: ninguna estados: ['archive']

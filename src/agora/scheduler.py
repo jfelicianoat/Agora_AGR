@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import UTC, datetime, time
+from datetime import datetime, time
 from typing import Any
 
 from agora.board import Board, BoardState
-from agora.cards import Card, format_timestamp, utc_now
+from agora.cards import Card, format_timestamp
+from agora.errors import AgoraError, CardFormatError, InvalidTransition
 
 _WEEKDAYS = {
     "monday": 0,
@@ -34,6 +35,8 @@ class ScheduledMaterialization:
     instance: str
     created: bool
     reason: str
+    #: La plantilla no se pudo leer o la instancia no se pudo crear.
+    error: bool = False
 
 
 class Scheduler:
@@ -41,18 +44,31 @@ class Scheduler:
         self.board = board
 
     def materialize(self, *, now: datetime | None = None) -> tuple[ScheduledMaterialization, ...]:
-        current = (now or utc_now()).astimezone(UTC)
+        # El dia y la hora de `trigger` son los del reloj de quien la escribio:
+        # hora local del PC del tablero. Una `now` explicita manda su propia zona.
+        current = now if now is not None else datetime.now().astimezone()
+        if current.tzinfo is None:
+            current = current.astimezone()
         outcomes: list[ScheduledMaterialization] = []
         for template_path in self.board.paths(BoardState.SCHEDULED):
-            card = Card.load(template_path)
+            try:
+                card = Card.load(template_path)
+            except (CardFormatError, OSError) as exc:
+                # Una plantilla rota no puede parar a las demas ni el latido.
+                outcomes.append(
+                    ScheduledMaterialization(template_path.name, "", False, str(exc), True)
+                )
+                continue
             trigger = card.metadata.get("trigger")
             due, reason = _is_due(trigger, current)
             if not due:
                 outcomes.append(ScheduledMaterialization(template_path.name, "", False, reason))
                 continue
             filename = f"{current.date().isoformat()}-{_slug(template_path.stem)}.md"
-            target = self.board.directory(BoardState.PENDING) / filename
-            if target.exists():
+            # La instancia del periodo puede estar ya en cualquier carpeta: si
+            # sólo se miraba `pending`, en cuanto el runner la reclamaba se volvía
+            # a crear, se pagaba dos veces y el duplicado se atascaba (A-1).
+            if any((self.board.directory(state) / filename).exists() for state in BoardState):
                 outcomes.append(
                     ScheduledMaterialization(
                         template_path.name, filename, False, "already materialized"
@@ -65,13 +81,34 @@ class Scheduler:
             metadata["created"] = format_timestamp(current)
             metadata["paths"] = []
             metadata["attempts"] = 0
-            for field in ("agent", "claimed", "closed", "blocked", "model"):
+            # Lo que es de una ejecución concreta no se hereda: un `remote.task_id`
+            # haría que el runner reanudara una tarea vieja del broker (A-8).
+            for field in (
+                "agent", "claimed", "closed", "blocked", "model", "cancelled", "remote",
+                "releases", "free_releases", "attempt_budget", "external_reference",
+                "review_context", "origin_identity", "flow_id", "execution", "review_gate",
+                "profile", "profile_version",
+            ):
                 metadata.pop(field, None)
             instance = Card(metadata, card.body)
             instance.append_record(
                 "scheduler", [f"Materialized from {template_path.name}."], when=current
             )
-            self.board.create(filename, instance)
+            try:
+                self.board.create(filename, instance)
+            except InvalidTransition:
+                # Otro proceso (la ventana o el API) la creó en el mismo instante.
+                outcomes.append(
+                    ScheduledMaterialization(
+                        template_path.name, filename, False, "already materialized"
+                    )
+                )
+                continue
+            except (AgoraError, OSError) as exc:
+                outcomes.append(
+                    ScheduledMaterialization(template_path.name, filename, False, str(exc), True)
+                )
+                continue
             outcomes.append(ScheduledMaterialization(template_path.name, filename, True, "due now"))
         return tuple(outcomes)
 

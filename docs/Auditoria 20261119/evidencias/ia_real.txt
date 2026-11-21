@@ -1,0 +1,25 @@
+retomar ia-real-1795106649.md in-progress
+18:53:58 {"status":"completed","card":"ia-real-1795106649.md","detail":""}
+estado final: done completed None
+modelo: ollama/local/qwen3.8:27b | perfil: task-intake 1.2.0
+artefacto 200 1619 bytes
+contrato: task-brief 1 | claves: ['assumptions', 'confidence', 'contract', 'contract_version', 'questions', 'summary', 'understood']
+record:
+- 2026-11-19 16:44 UTC
+    - agora-api: CARD accepted from authenticated client provisional-client.
+- 2026-11-19 16:44 UTC
+    - auditoria-ia: Claimed CARD atomically and began admission.
+- 2026-11-19 16:44 UTC
+    - auditoria-ia: Remote profile selected: task-intake@1.2.0.
+- 2026-11-19 16:44 UTC
+    - auditoria-ia: AI_Broker task submitted: task_6dff42e599204184b0a3df7590c8425f.
+- 2026-11-19 18:53 UTC
+    - auditoria-ia: AI_Broker task completed: task_6dff42e599204184b0a3df7590c8425f.
+    - auditoria-ia: Effective model: ollama/local/qwen3.8:27b.
+    - auditoria-ia: Broker invocations: 1; cost USD: 0.00000000.
+    - auditoria-ia: Determinism policy: strict; prompt compression: verified.
+    - auditoria-ia: Deliverable: final.md via artifacts; sha256 e4a16ab4642103dee2a4c37d86d17c73e118cdc19b35449a4f5227338a70baba.
+- 2026-11-19 18:53 UTC
+    - auditoria-ia: Verified artifact: C:\Users\jfeli\AppData\Local\Temp\claude\79afb9b8fcc360f5\005c131d-e9f4-4ae9-b919-a8d6f3941cd2\scratchpad\e2e-ia\artifacts\remote\ia-real-1795106649\final.md
+- 2026-11-19 18:53 UTC
+    - auditoria-ia: CARD closed.

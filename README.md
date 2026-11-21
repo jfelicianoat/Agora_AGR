@@ -15,7 +15,7 @@ AI_Broker.
 
 ```powershell
 # 1. Construir el paquete
-.\scriptsuild-runner-package.ps1        # -> distgora-runner-<version>.zip
+.\scripts\build-runner-package.ps1        # -> dist\agora-runner-<version>.zip
 
 # 2. En el PC del tablero
 .\scripts\install-board.ps1               # -> C:\Agora + accesos directos
@@ -34,7 +34,7 @@ La ventana se puede abrir sin el tablero: lee el KANBAN del disco. El tablero
 sólo hace falta cuando el PC IA tiene que trabajar, y necesita certificado
 (`agora-certs`) y una regla de cortafuegos para el puerto 8741.
 
-Para el PC IA, copia `distgora-runner-<version>.zip` y sigue
+Para el PC IA, copia `dist\agora-runner-<version>.zip` y sigue
 `docs/INSTALAR_RUNNER.md`.
 
 ## F0 development
@@ -68,6 +68,22 @@ Install the optional desktop dependency and open a workspace containing `KANBAN`
 python -m pip install -e ".[dev,desktop]"
 agora-desktop .
 ```
+
+Uso diario de la ventana (0.2.18):
+
+- **Situación** explica por qué una tarjeta pendiente avanza o no (la recoge el
+  runner del PC IA, faltan entradas, ningún perfil la acepta…).
+- **Desbloquear…** devuelve a Pendientes una tarjeta bloqueada; si agotó sus
+  intentos le da otros tantos. **Cancelar…** la archiva (pide confirmación y
+  motivo). **Abrir resultado** abre el fichero que produjo una tarjeta terminada.
+- **Ejecutar ronda** rescata tarjetas abandonadas, crea las programadas que tocan
+  y ejecuta sólo perfiles locales: `harness` ausente o `fake` **y** ninguna
+  skill con contrato de salida (los de demostración de F0). Las tarjetas de IA **no** las toca: las recoge el runner
+  del PC IA a través de *Agora Tablero*. Antes de 0.2.18 esta ronda cerraba
+  tarjetas de IA con un artefacto de relleno (D-01).
+- Las plantillas de `KANBAN/scheduled/` (`trigger: every day|week|month`, `day`,
+  `time` en hora local del PC del tablero) se materializan en cada latido del
+  tablero y en cada ronda real.
 
 The window never edits CARD files itself. It reads snapshots and requests dispatcher
 actions through the Qt-free `AgoraApplication` façade, so the core and scheduler remain

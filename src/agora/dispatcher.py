@@ -29,6 +29,8 @@ class DispatchStatus(StrEnum):
     ERROR = "error"
     #: Una tarjeta reclamada hace demasiado y devuelta a pendientes.
     RECOVERED = "recovered"
+    #: Una plantilla de `scheduled/` que ha creado su instancia del periodo.
+    MATERIALIZED = "materialized"
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,6 +96,10 @@ class Dispatcher:
         # y puede repartirse ya, sin esperar al siguiente. Al reves seria correcto
         # pero tardaria un latido de mas en cada rescate.
         outcomes: list[DispatchOutcome] = list(self.sweep_abandoned(dry_run=dry_run))
+        # Paso cero de la norma (atomic-agents-standard, «Scheduled cards»): las
+        # plantillas que tocan entran en `pending` antes de repartir. Hasta la
+        # auditoria del 19-11 no lo llamaba nadie y `scheduled/` no hacia nada (D-04).
+        outcomes.extend(self.materialize_scheduled(dry_run=dry_run))
         candidates, errors = self._cards_by_priority()
         outcomes.extend(errors)
         dispatched = 0
@@ -210,9 +216,41 @@ class Dispatcher:
                     f"{action.reason}: returned to {action.destination.value} "
                     f"with attempt {action.attempts}{suffix}"
                 ),
+                final_path=None
+                if dry_run
+                else self.board.directory(action.destination) / action.card,
             )
             for action in actions
         )
+
+    def materialize_scheduled(self, *, dry_run: bool = False) -> tuple[DispatchOutcome, ...]:
+        """Crea en `pending` la instancia del periodo de cada plantilla que toca.
+
+        En seco no escribe ni informa: la instancia aparecera en el siguiente
+        latido real, y simularla aqui obligaria a duplicar el calculo de fechas.
+        Como el barrido, es publica porque el API la llama con escritura aunque
+        su reparto sea simulado.
+        """
+        if dry_run:
+            return ()
+        from agora.scheduler import Scheduler
+
+        outcomes: list[DispatchOutcome] = []
+        for item in Scheduler(self.board).materialize():
+            if item.error:
+                outcomes.append(
+                    DispatchOutcome(item.template, DispatchStatus.ERROR, reason=item.reason)
+                )
+            elif item.created:
+                outcomes.append(
+                    DispatchOutcome(
+                        item.instance,
+                        DispatchStatus.MATERIALIZED,
+                        reason=f"materialized from {item.template}",
+                        final_path=self.board.directory(BoardState.PENDING) / item.instance,
+                    )
+                )
+        return tuple(outcomes)
 
     def _cards_by_priority(self) -> tuple[list[tuple[Path, Card]], tuple[DispatchOutcome, ...]]:
         cards: list[tuple[Path, Card]] = []

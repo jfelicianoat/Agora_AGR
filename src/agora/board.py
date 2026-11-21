@@ -2,15 +2,21 @@
 
 from __future__ import annotations
 
+import functools
 import os
-from contextlib import suppress
+import sys
+import threading
+import time
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
+from typing import Any, TypeVar
 
 from agora.cards import Card, format_timestamp, utc_now
-from agora.errors import CardFormatError, ClaimConflict, InvalidTransition
+from agora.errors import BoardBusy, CardFormatError, ClaimConflict, InvalidTransition
 
 
 class BoardState(StrEnum):
@@ -55,9 +61,74 @@ class RecoveryAction:
     reason: str
 
 
+#: Cuántas veces puede volver una tarjeta a `pending` sin gastar intento antes de
+#: pararse. Sin tope, un runner que la suelta en cada vuelta (el broker no puede
+#: cumplirla, Core la deniega) reescribía tarjeta, idempotencia y eventos cada
+#: 15 s para siempre (A-2 del arbitraje de la auditoría del 19-11).
+MAX_FREE_RELEASES = 5
+
+#: Cuánto espera una mutación a que otro proceso suelte el tablero.
+_LOCK_WAIT_SECONDS = 10.0
+
+#: Profundidad del candado por tablero y por hilo (reentrante aunque haya varios
+#: objetos `Board` sobre la misma carpeta en el mismo hilo).
+_held = threading.local()
+
+_F = TypeVar("_F", bound=Callable[..., Any])
+
+
+def _locked(method: _F) -> _F:
+    """Serializa la mutación con las de otros procesos sobre el mismo tablero."""
+
+    @functools.wraps(method)
+    def wrapper(self: Board, *args: Any, **kwargs: Any) -> Any:
+        with self._mutation_lock():
+            return method(self, *args, **kwargs)
+
+    return wrapper  # type: ignore[return-value]
+
+
 class Board:
     def __init__(self, root: Path) -> None:
         self.root = root.resolve()
+
+    @contextmanager
+    def _mutation_lock(self) -> Iterator[None]:
+        """Candado del sistema operativo entre procesos, reentrante en el mismo hilo.
+
+        La ventana y el API son procesos distintos sobre las mismas carpetas. Sin
+        esto, desbloquear en la ventana a la vez que el API desbloqueaba dejaba la
+        tarjeta en `blocked` y en `pending` a la vez (A-4 del arbitraje).
+
+        Es un bloqueo de rango sobre un fichero que nunca se borra: si el proceso
+        muere, Windows lo suelta solo, y un indexador que abra el fichero no
+        impide soltarlo (B-2). Por eso no hay caducidad que adivinar.
+        """
+        key = str(self.root)
+        depths: dict[str, int] = _held.__dict__.setdefault("depths", {})
+        if depths.get(key):
+            depths[key] += 1
+            try:
+                yield
+            finally:
+                depths[key] -= 1
+            return
+        self.root.mkdir(parents=True, exist_ok=True)
+        stream = open(self.root / ".board.lock", "a+b")  # noqa: SIM115 - vive en el with
+        try:
+            deadline = time.monotonic() + _LOCK_WAIT_SECONDS
+            while not _try_lock(stream):
+                if time.monotonic() > deadline:
+                    raise BoardBusy("BOARD is busy: another process holds its lock")
+                time.sleep(0.02)
+            depths[key] = 1
+            try:
+                yield
+            finally:
+                depths[key] = 0
+                _unlock(stream)
+        finally:
+            stream.close()
 
     def initialize(self) -> None:
         for state in BoardState:
@@ -72,6 +143,7 @@ class Board:
             return ()
         return tuple(sorted(path for path in directory.glob("*.md") if path.is_file()))
 
+    @_locked
     def create(self, filename: str, card: Card, *, state: BoardState = BoardState.PENDING) -> Path:
         self.initialize()
         name = _card_filename(filename)
@@ -93,6 +165,7 @@ class Board:
         card.source = target
         return target
 
+    @_locked
     def claim(self, filename: str, agent: str, *, when: datetime | None = None) -> Path:
         name = _card_filename(filename)
         source = self.directory(BoardState.PENDING) / name
@@ -126,6 +199,7 @@ class Board:
                 os.rmdir(guard)
         return destination
 
+    @_locked
     def progress(
         self,
         claimed_path: Path,
@@ -139,6 +213,7 @@ class Board:
         card.append_record(actor, milestones, when=when)
         card.save(claimed_path)
 
+    @_locked
     def close(
         self,
         claimed_path: Path,
@@ -167,6 +242,7 @@ class Board:
         _rename_transition(claimed_path, destination)
         return destination
 
+    @_locked
     def return_pending(
         self,
         claimed_path: Path,
@@ -180,9 +256,26 @@ class Board:
         card = Card.load(claimed_path)
         if increment_attempts:
             card.metadata["attempts"] = card.attempts + 1
+            # El tope cuenta vueltas gratis *seguidas*: un intento real lo reinicia (B-4).
+            card.metadata.pop("free_releases", None)
+        else:
+            card.metadata["free_releases"] = _int_field(card, "free_releases") + 1
+        _count_release(card)
         card.metadata.pop("agent", None)
         card.metadata.pop("claimed", None)
         card.append_record(actor, [reason], when=when)
+        if not increment_attempts and _int_field(card, "free_releases") >= MAX_FREE_RELEASES:
+            return self._block_loaded(
+                claimed_path,
+                card,
+                actor=actor,
+                reason=(
+                    f"Released {MAX_FREE_RELEASES} times without being attempted; "
+                    f"last reason: {reason}"
+                ),
+                when=when,
+                code="repeatedly_released",
+            )
         if card.attempts >= card.max_attempts:
             return self._block_loaded(
                 claimed_path,
@@ -198,6 +291,7 @@ class Board:
         _remove_claim_guard(self, claimed_path.name)
         return destination
 
+    @_locked
     def block_pending(
         self,
         pending_path: Path,
@@ -217,6 +311,7 @@ class Board:
             code=code,
         )
 
+    @_locked
     def unblock(
         self,
         filename: str,
@@ -229,12 +324,31 @@ class Board:
         source = self.directory(BoardState.BLOCKED) / name
         card = Card.load(source)
         card.metadata.pop("blocked", None)
-        card.append_record(actor, [f"CARD unblocked: {reason}"], when=when)
+        milestones = [f"CARD unblocked: {reason}"]
+        if card.attempts >= card.max_attempts:
+            # Sin esto la tarjeta volvia a `pending` con los intentos agotados:
+            # el despachador no la repartia nunca y el cliente la veia `queued`
+            # para siempre (D-02). No se ponen los intentos a cero: el intento
+            # forma parte de la clave de idempotencia del broker, y repetirla le
+            # devolveria la tarea que ya fallo. Se amplia el presupuesto.
+            # Siempre el presupuesto original, no el ya ampliado: si no, cada
+            # desbloqueo lo duplicaba (3→6→12…, A-5 del arbitraje).
+            budget = _int_field(card, "attempt_budget") or card.max_attempts
+            card.metadata["attempt_budget"] = budget
+            extended = card.attempts + budget
+            milestones.append(
+                f"Attempt budget extended from {card.max_attempts} to {extended}."
+            )
+            card.metadata["max_attempts"] = extended
+        card.metadata.pop("free_releases", None)
+        _count_release(card)
+        card.append_record(actor, milestones, when=when)
         card.save(source)
         destination = self.directory(BoardState.PENDING) / name
         _rename_transition(source, destination)
         return destination
 
+    @_locked
     def cancel(self, filename: str, *, actor: str, reason: str) -> Path:
         """Cancel a pending or claimed CARD into the durable archive."""
         name = _card_filename(filename)
@@ -354,6 +468,53 @@ class Board:
             )
             actions.append(RecoveryAction(path.name, state, attempts, "zombie timeout"))
         return tuple(actions)
+
+
+def _try_lock(stream: Any) -> bool:
+    stream.seek(0)
+    try:
+        if sys.platform == "win32":
+            import msvcrt
+
+            msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        return False
+    return True
+
+
+def _unlock(stream: Any) -> None:
+    stream.seek(0)
+    with suppress(OSError):
+        if sys.platform == "win32":
+            import msvcrt
+
+            msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+
+
+def _int_field(card: Card, field: str) -> int:
+    value = card.metadata.get(field, 0)
+    return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else 0
+
+
+def _count_release(card: Card) -> None:
+    """Cuenta cada vuelta a `pending`; entra en la clave de idempotencia del runner.
+
+    Un runner que suelta una tarjeta sin gastar intento (Core la deniega, el
+    broker no puede cumplirla) y la vuelve a reclamar repetia la misma clave, y
+    el API le devolvia la respuesta guardada del primer `claim` sin reclamar
+    nada (D-03). Con este contador la clave cambia en cada ciclo.
+    """
+    previous = card.metadata.get("releases", 0)
+    count = previous if isinstance(previous, int) and not isinstance(previous, bool) else 0
+    card.metadata["releases"] = max(0, count) + 1
 
 
 def _card_filename(filename: str) -> str:

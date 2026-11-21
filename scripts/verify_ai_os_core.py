@@ -7,7 +7,10 @@ Uso: python scripts/verify_ai_os_core.py <core_url> <token_agora> <token_directo
 El tablero es uno de usar y tirar en <carpeta> (el API de Agora en proceso, sin TLS), así
 que el tablero real del usuario no se toca. El runner es el `AiRunner` real con su
 `BrokerClient` real: este cumple el contrato de loopback y un transporte reenvía
-127.0.0.1:8765 al broker del PC IA, sin relajar la restricción del código.
+https://127.0.0.1:8765 al broker del PC IA, sin relajar la restricción del código. El Broker
+sólo sirve HTTPS desde el 20-oct-2026: el transporte confía en la AI Broker CA
+(`AI_BROKER_CA_CERT`, por defecto C:\\Agora\\pki-broker\\ca.crt), cuyo certificado incluye
+192.168.1.52.
 Core ha de tener las políticas de `sembrar_ecosistema.py` y el token por app de agora; el
 token director (común) pone y quita la política DENY de la prueba.
 """
@@ -15,6 +18,7 @@ token director (común) pone y quita la política DENY de la prueba.
 from __future__ import annotations
 
 import os
+import ssl
 import sys
 from pathlib import Path
 
@@ -39,7 +43,7 @@ from test_ai_runner import InProcessAgoraClient  # noqa: E402
 
 CORE, TOK_AGORA, TOK_DIR, WORK = sys.argv[1:5]
 MODEL = os.environ.get("AGORA_VERIFY_MODEL", "ollama/local/gemma4:12b").split("/")
-BROKER_LAN = "http://192.168.1.52:8765"
+BROKER_CA = os.environ.get("AI_BROKER_CA_CERT", r"C:\Agora\pki-broker\ca.crt")
 ok = 0
 
 
@@ -55,7 +59,8 @@ class ForwardToAiPc(httpx.BaseTransport):
     """127.0.0.1:8765 -> broker del PC IA; el cliente sigue viendo loopback."""
 
     def __init__(self) -> None:
-        self._inner = httpx.HTTPTransport()
+        # Con un transporte propio httpx ignora el `verify` del cliente: la CA va aquí
+        self._inner = httpx.HTTPTransport(verify=ssl.create_default_context(cafile=BROKER_CA))
 
     def handle_request(self, request: httpx.Request) -> httpx.Response:
         request.url = request.url.copy_with(host="192.168.1.52")
@@ -74,7 +79,7 @@ board_api = TestClient(
     headers={"Authorization": f"Bearer {api_token}"},
 )
 broker = BrokerClient(
-    "http://127.0.0.1:8765", os.environ["AI_BROKER_ADMIN_TOKEN"], transport=ForwardToAiPc()
+    "https://127.0.0.1:8765", os.environ["AI_BROKER_ADMIN_TOKEN"], transport=ForwardToAiPc()
 )
 policy = BrokerPolicy(
     determinism="strict",

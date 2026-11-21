@@ -1,5 +1,6 @@
 """FastAPI application factory for Agora API v1."""
 
+import logging
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -26,9 +27,18 @@ from agora.application import AgoraApplication
 from agora.board import BoardState
 from agora.cards import Card
 from agora.contracts import ContractRegistry
-from agora.errors import AgoraError, CardFormatError, ClaimConflict, InvalidTransition
+from agora.dispatcher import DispatchOutcome, DispatchStatus
+from agora.errors import (
+    AgoraError,
+    BoardBusy,
+    CardFormatError,
+    ClaimConflict,
+    InvalidTransition,
+)
 from agora.security.fastapi import ALL_AGORA_SCOPES, BearerAuthenticator, install_oauth_endpoints
 from agora.security.oauth import OAuthAuthority, OAuthPrincipal
+
+_log = logging.getLogger("agora.api")
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,11 +65,43 @@ def create_api(application: AgoraApplication, settings: ApiSettings) -> FastAPI:
     # origin» despues de haber respondido 201: el cliente lo habria hecho todo
     # bien y su trabajo moriria igual.
     application.trust_origin(settings.principal)
-    remote = RemoteWorkService(application)
     private_root = application.workspace / ".agora"
     idempotency = IdempotencyStore(private_root / "idempotency.json")
     events = EventStore(private_root / "events.json")
     operation_lock = Lock()
+
+    def publish_heartbeat(outcomes: tuple[DispatchOutcome, ...]) -> None:
+        """Lo que el latido movio sin que nadie lo pidiera tambien es un evento (D-05).
+
+        Antes un rescate que agotaba intentos dejaba la tarjeta `failed` y quien
+        seguia `/events` la seguia viendo `running`.
+        """
+        for outcome in outcomes:
+            if outcome.status is DispatchStatus.ERROR:
+                # Una plantilla rota no tiene tarjeta que publicar, pero no puede
+                # perderse en silencio (A-7): queda en el registro del tablero.
+                _log.warning("heartbeat: %s: %s", outcome.card, outcome.reason)
+                continue
+            path = outcome.final_path
+            if path is None or not path.is_file():
+                continue
+            reached = BoardState(path.parent.name)
+            kind = (
+                "card.created"
+                if outcome.status is DispatchStatus.MATERIALIZED
+                else "card.recovered"
+            )
+            data: dict[str, Any] = {
+                "filename": path.name,
+                "state": reached.value,
+                **project(reached, _metadata_of(path)),
+                **_reference_of(path),
+            }
+            if kind == "card.created":
+                data["principal"] = "scheduler"
+            events.emit(kind, data)
+
+    remote = RemoteWorkService(application, on_heartbeat=publish_heartbeat)
     app = FastAPI(title="Agora API", version="1.0.0", docs_url=None, redoc_url=None)
 
     @app.middleware("http")
@@ -107,6 +149,13 @@ def create_api(application: AgoraApplication, settings: ApiSettings) -> FastAPI:
     @app.exception_handler(InvalidTransition)
     async def state_conflict(_request: Request, exc: Exception) -> Response:
         return JSONResponse(status_code=409, content={"detail": public(str(exc))})
+
+    @app.exception_handler(BoardBusy)
+    async def board_busy(_request: Request, exc: BoardBusy) -> Response:
+        # Ocupado no es «transición inválida»: se reintenta (B-3).
+        return JSONResponse(
+            status_code=503, content={"detail": str(exc)}, headers={"Retry-After": "2"}
+        )
 
     @app.exception_handler(CardFormatError)
     async def invalid_card(_request: Request, exc: CardFormatError) -> Response:
@@ -275,7 +324,9 @@ def create_api(application: AgoraApplication, settings: ApiSettings) -> FastAPI:
         _principal: BoardClaim,
         profiles: Annotated[list[str], Query(min_length=1)],
     ) -> tuple[WorkItem, ...]:
-        return remote.work(tuple(profiles))
+        # El latido escribe (rescates, programadas): no puede cruzarse con un claim.
+        with operation_lock:
+            return remote.work(tuple(profiles))
 
     @app.get("/api/v1/claims", response_model=list[WorkItem])
     def claims(

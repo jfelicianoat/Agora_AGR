@@ -100,8 +100,18 @@ Cuando `status` es `failed`, `blocked` o `cancelled`, la respuesta lleva un
 
 Los códigos son estables y un cliente puede ramificar sobre ellos:
 `attempts_exhausted`, `untrusted_origin`, `cancelled_by_client`,
-`invalid_recipient`, `no_matching_profile`, `ambiguous_profile`, `unknown`. El `message` es para una persona y puede cambiar
+`invalid_recipient`, `no_matching_profile`, `ambiguous_profile`,
+`repeatedly_released`, `unknown`. El `message` es para una persona y puede cambiar
 sin avisar.
+
+### `repeatedly_released` (0.2.18, auditoría del 19-nov)
+
+`status: blocked`, no terminal. Un runner soltó la tarjeta cinco veces seguidas
+(un intento real reinicia la cuenta) **sin intentarla** (el broker en marcha no puede cumplir su contrato, o AI OS Core
+la deniega al recuperarla). Antes volvía a `pending` sin límite y el runner la
+recogía cada 15 s, reescribiendo tarjeta, idempotencia y eventos. Se arregla la
+causa (actualizar el broker, cambiar la política) y se desbloquea, que pone el
+contador a cero.
 
 ### `no_matching_profile` y `ambiguous_profile` (0.2.12, auditoría del 14-oct, AG-04)
 

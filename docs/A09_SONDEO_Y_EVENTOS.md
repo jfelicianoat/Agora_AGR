@@ -81,7 +81,17 @@ El bucle del cliente es todo lo que hace falta:
   referencia produce un evento limpio, sin la clave.
 - Los `kind` son los del ciclo de vida: `card.created`, `card.claimed`,
   `card.progressed`, `card.closed`, `card.yielded`, `card.cancelled`,
-  `card.unblocked`.
+  `card.unblocked` y, desde 0.2.18, `card.recovered`.
+- **El latido también publica** (0.2.18, D-05 de la auditoría del 19-11). Cada
+  `GET /api/v1/work` del runner es el latido del tablero: rescata tarjetas
+  abandonadas (`card.recovered`, con el estado al que fueron: `queued` o
+  `failed` si agotaron intentos) y crea las instancias de las plantillas
+  programadas (`card.created` con `principal: "scheduler"`). Antes esos
+  movimientos no dejaban evento y quien seguía el cursor veía `running` para
+  siempre una tarjeta que ya había fallado.
+- Lo que hace la ventana de escritorio (ronda, desbloquear, cancelar) ocurre en
+  otro proceso y **no** pasa por este cursor: se ve con
+  `GET /api/v1/cards/{filename}`, que siempre lee el disco.
 
 Una CARD ilegible no tumba su evento: lo que se estaba haciendo con ella ya
 ocurrió, y el evento sale sin la referencia en vez de fallar.

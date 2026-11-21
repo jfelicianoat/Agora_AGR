@@ -1,0 +1,6 @@
+
+plataforma: linux
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+51 passed, 1 deselected, 2 warnings in 6.91s
+tarjetas: 40 en dos carpetas: ninguna estados: ['archive']

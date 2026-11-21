@@ -10,6 +10,8 @@ from typing import Protocol
 import httpx
 
 from agora.api.contracts import RunnerOutcome, WorkItem
+from agora.documents import parse_markdown_document
+from agora.errors import AgoraError
 from agora.remote.client import AgoraApiClient, AgoraApiError
 
 
@@ -96,5 +98,22 @@ class RemoteRunner:
 
 
 def _attempt_key(runner_id: str, work: WorkItem) -> str:
+    """Clave de un ciclo de reclamacion: runner, tarjeta, intento y vueltas a `pending`.
+
+    Sin las vueltas (`releases`), soltar una tarjeta sin gastar intento y volver
+    a reclamarla repetia la clave y el API devolvia el `claim` guardado sin
+    reclamar (D-03). Una tarjeta que nunca volvio conserva la clave de siempre.
+    """
     value = f"{runner_id}\0{work.filename}\0{work.attempts}"
+    releases = _releases(work.card_document)
+    if releases:
+        value += f"\0{releases}"
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _releases(document: str) -> int:
+    try:
+        value = parse_markdown_document(document)[0].get("releases", 0)
+    except AgoraError:
+        return 0
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0

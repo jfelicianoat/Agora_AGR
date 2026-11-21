@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import ClassVar, Protocol
 
 from agora.board import Board
 from agora.documents import atomic_write_text
@@ -19,9 +19,26 @@ class WorkerLauncher(Protocol):
 
 @dataclass(slots=True)
 class DeterministicHarness:
-    """A network-free worker used to prove the entire F0 lifecycle."""
+    """A network-free worker used to prove the entire F0 lifecycle.
 
+    Sólo ejecuta lo que de verdad sabe hacer. Antes no tenía nombre, y el
+    despachador entiende «lanzador sin nombre» como «vale para cualquier
+    perfil»: la ronda real de la ventana reclamaba tarjetas de IA de un cliente
+    y las cerraba `completed` con este texto de relleno en lugar del documento
+    del contrato (D-01, auditoría 2026-11-19).
+    """
+
+    #: El nombre del arnés de la demo F0 (`harness: fake`).
+    harness_name: ClassVar[str] = "fake"
     workspace_root: Path | None = None
+
+    def is_available(self, profile: Profile) -> bool:
+        """No puede cumplir un contrato de salida: esas tarjetas son del runner de IA."""
+        try:
+            skills = load_profile_skills(profile.source.parent, profile.skills)
+        except Exception:  # un perfil que no carga tampoco se ejecuta aquí
+            return False
+        return all(skill.output_contract is None for skill in skills)
 
     def launch(self, board: Board, claimed_path: Path, profile: Profile) -> Path:
         from agora.cards import Card

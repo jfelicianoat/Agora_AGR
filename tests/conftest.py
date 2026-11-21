@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import gc
+from collections.abc import Iterator
 from pathlib import Path
 
+import pytest
 import yaml
 
 from agora.board import Board
@@ -68,3 +71,14 @@ def create_card(board: Board, filename: str = "task.md", **overrides: object) ->
     values.update(overrides)
     card = Card.create(**values)  # type: ignore[arg-type]
     return board.create(filename, card)
+
+
+@pytest.fixture(autouse=True, scope="module")
+def _collect_in_main_thread() -> Iterator[None]:
+    """Recoge la basura de cada módulo en el hilo principal.
+
+    Si un widget de Qt sobrante lo recoge el GC dentro de un hilo de `anyio`
+    (los de `TestClient`), Qt aborta el proceso entero al salir.
+    """
+    yield
+    gc.collect()

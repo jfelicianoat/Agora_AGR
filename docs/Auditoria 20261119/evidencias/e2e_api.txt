@@ -1,0 +1,17 @@
+PASA  F-A crear tarjeta 
+PASA  F-A ronda real no la ejecuta (D-01) 
+PASA  F-A sigue en pendientes 
+PASA  F-A situación explicada (U-04) 
+PASA  F-A el runner la ve 
+PASA  F-B desbloquear 
+PASA  F-B presupuesto ampliado (D-02) 
+PASA  F-B el runner la ve 
+PASA  F-C clave nueva (D-03) 
+PASA  F-C reclama de verdad 
+PASA  F-D evento del rescate (D-05) 
+PASA  F-E materializa (D-04) 
+PASA  F-E evento card.created 
+PASA  F-E no se recrea al reclamarla (A-1) 
+PASA  F-G parada tras 5 vueltas gratis 
+PASA  F-F cancelada visible para el cliente 
+{"total": 16, "fallan": 0}

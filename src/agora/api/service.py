@@ -6,7 +6,7 @@ import base64
 import binascii
 import hashlib
 import re
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -14,14 +14,13 @@ from typing import Any
 from agora.api.contracts import CloseRequest, CreateCardRequest, InputResource, WorkItem
 from agora.api.projection import ErrorCode
 from agora.application import AgoraApplication
-from agora.board import BoardState
+from agora.board import Board, BoardState
 from agora.cards import Card
-from agora.dispatcher import Dispatcher, DispatchStatus
+from agora.dispatcher import Dispatcher, DispatchOutcome, DispatchStatus
 from agora.documents import atomic_write_bytes
 from agora.errors import CardFormatError, InvalidTransition
-from agora.harnesses import DeterministicHarness
 from agora.matching import MatchStatus, match_card
-from agora.profiles import load_profiles
+from agora.profiles import Profile, load_profiles
 
 #: Destinatarios que significan «esto lo hace una persona». El despachador los
 #: salta antes de emparejar, asi que no son un destinatario invalido.
@@ -35,11 +34,33 @@ _UNMATCHED_CODES: dict[MatchStatus, ErrorCode] = {
 }
 
 
+class _RemoteRunners:
+    """El lanzador del reparto que hace el API: aquí no se ejecuta nada.
+
+    El API sólo simula para saber qué ofrecer; ejecutan los runners remotos,
+    cada uno con su arnés. Con el arnés determinista como lanzador, las
+    tarjetas de perfiles `harness: broker` o con contrato de salida dejarían
+    de ofrecerse al runner de IA.
+    """
+
+    def launch(self, board: Board, claimed_path: Path, profile: Profile) -> Path:
+        raise RuntimeError("the API never executes CARDs itself")
+
+
 class RemoteWorkService:
-    def __init__(self, application: AgoraApplication, *, artifact_limit_bytes: int = 25_000_000):
+    def __init__(
+        self,
+        application: AgoraApplication,
+        *,
+        artifact_limit_bytes: int = 25_000_000,
+        on_heartbeat: Callable[[tuple[DispatchOutcome, ...]], None] | None = None,
+    ):
         self.application = application
         self.board = application.board
         self.artifact_limit_bytes = artifact_limit_bytes
+        #: Recibe lo que el latido movio de verdad (rescates, programadas) para
+        #: que el API lo publique como eventos (D-05).
+        self.on_heartbeat = on_heartbeat
 
     def create_card(self, request: CreateCardRequest, *, principal: str) -> Path:
         card = Card.create(
@@ -115,7 +136,7 @@ class RemoteWorkService:
         dispatcher = Dispatcher(
             self.board,
             self.application.profiles_root,
-            DeterministicHarness(self.application.workspace),
+            _RemoteRunners(),
             max_dispatches_per_round=1_000_000,
             trusted_origins=self.application.trusted_origins,
         )
@@ -125,7 +146,9 @@ class RemoteWorkService:
         # real, asi que si el rescate se simulara tambien, no rescataria nunca a
         # nadie —que es justo como se quedo `job-ca559a4b560b.md` nueve horas y
         # media—. Ver `docs/HALLAZGO_20260919_TARJETA_HUERFANA.md`.
-        dispatcher.sweep_abandoned()
+        moved = dispatcher.sweep_abandoned() + dispatcher.materialize_scheduled()
+        if self.on_heartbeat is not None and moved:
+            self.on_heartbeat(moved)
         outcomes = dispatcher.run_once(dry_run=True)
         items: list[WorkItem] = []
         for outcome in outcomes:
@@ -161,6 +184,12 @@ class RemoteWorkService:
         selected = eligible.get(filename)
         if selected is None or selected.profile.lower() != profile.lower():
             raise InvalidTransition("CARD is not eligible for this runner/profile")
+        with self.board._mutation_lock():
+            return self._claim_locked(filename, runner_id, profile)
+
+    def _claim_locked(self, filename: str, runner_id: str, profile: str) -> Path:
+        # Toda la secuencia leer-modificar-guardar va con el candado del tablero:
+        # sin él, la ventana podía cancelar en medio (B-1 del arbitraje).
         path = self.board.claim(filename, runner_id)
         resolved = self._profile_version(profile)
         etiqueta = f"{profile}@{resolved}" if resolved else profile
@@ -191,6 +220,19 @@ class RemoteWorkService:
         checkpoint: dict[str, str] | None = None,
         review_gate_audit: dict[str, Any] | None = None,
     ) -> Path:
+        with self.board._mutation_lock():
+            return self._progress_locked(
+                filename, runner_id, milestones, checkpoint, review_gate_audit
+            )
+
+    def _progress_locked(
+        self,
+        filename: str,
+        runner_id: str,
+        milestones: list[str],
+        checkpoint: dict[str, str] | None,
+        review_gate_audit: dict[str, Any] | None,
+    ) -> Path:
         path = self._owned_claim(filename, runner_id)
         if checkpoint is not None:
             allowed = {"system", "task_id", "idempotency_key"}
@@ -209,6 +251,10 @@ class RemoteWorkService:
         return path
 
     def close(self, filename: str, request: CloseRequest) -> Path:
+        with self.board._mutation_lock():
+            return self._close_locked(filename, request)
+
+    def _close_locked(self, filename: str, request: CloseRequest) -> Path:
         claimed = self._owned_claim(filename, request.runner_id)
         artifact_root = self.application.workspace / "artifacts" / "remote" / Path(filename).stem
         paths: list[Path] = []

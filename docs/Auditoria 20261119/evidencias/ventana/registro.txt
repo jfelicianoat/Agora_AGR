@@ -1,0 +1,9 @@
+C:\Users\jfeli\AppData\Local\Temp\claude\79afb9b8fcc360f5\005c131d-e9f4-4ae9-b919-a8d6f3941cd2\scratchpad\scripts\gui_e2e.py:74: SyntaxWarning: "\A" is an invalid escape sequence. Such sequences will not work in the future. Did you mean "\\A"? A raw string is also an option.
+  str(item).replace("C:\Agora\workspace", str(ws)) for item in card.metadata["paths"]
+a11-fallada: situación='Parada hasta que alguien la desbloquee' desbloquear=True
+tras desbloquear: resumen='a11-fallada.md vuelve a Pendientes' pendiente=True
+a11-fallada en pendientes: situación='En cola para otro ejecutor: si es de IA la recoge el runner del PC IA cuando el tablero (Agora Tablero) está en marcha (compatible runner is unavailable)'
+ronda real: 'Ronda: 1 para el runner de IA u otro ejecutor'
+verif-runner-0212.md: abrir=True situación='Terminada: su resultado se abre con «Abrir resultado»'
+abriría: C:\Users\jfeli\AppData\Local\Temp\claude\79afb9b8fcc360f5\005c131d-e9f4-4ae9-b919-a8d6f3941cd2\scratchpad\e2e-gui\artifacts\remote\verif-runner-0212\final.md
+cancelar: 'a11-fallada.md cancelada' archivada=True

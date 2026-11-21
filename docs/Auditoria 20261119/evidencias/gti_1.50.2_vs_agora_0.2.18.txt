@@ -1,0 +1,2 @@
+PASA  tablero ocupado -> AgoraUnavailable tras 10.0s: tablero ocupado (HTTP 503): {"detail":"BOARD is busy: another process holds its lock"}
+PASA  libre -> creada gti-1795124866.md, estado queued

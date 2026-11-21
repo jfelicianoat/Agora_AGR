@@ -35,6 +35,9 @@ ErrorCode = Literal[
     "invalid_recipient",
     "no_matching_profile",
     "ambiguous_profile",
+    #: Un runner la soltó varias veces sin intentarla (el broker no puede
+    #: cumplirla, Core la deniega): se para para que alguien decida.
+    "repeatedly_released",
     "unknown",
 ]
 
@@ -106,7 +109,12 @@ def _blocked(metadata: dict[str, Any]) -> dict[str, Any]:
     code = detail.get("code")
     # Las CARD bloqueadas antes de que existiera el codigo no lo llevan. No se
     # adivina leyendo el texto: se dice que no se sabe, que es la verdad.
-    if code not in {"attempts_exhausted", "untrusted_origin", "cancelled_by_client"}:
+    if code not in {
+        "attempts_exhausted",
+        "untrusted_origin",
+        "cancelled_by_client",
+        "repeatedly_released",
+    }:
         code = "unknown"
     error: dict[str, Any] = {
         "code": code,

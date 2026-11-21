@@ -53,6 +53,20 @@ agotó sus intentos se ha parado, no ha terminado; tratarla como final cerraría
 la puerta a `POST /admin/blocked/{filename}/unblock`, que existe justamente para
 eso.
 
+Desde 0.2.18 (D-02, auditoría del 19-11) desbloquear una tarjeta que **agotó
+sus intentos** le amplía el presupuesto: `max_attempts` pasa a
+`attempts + max_attempts` (3/3 → 3/6) y el Record lo anota. Antes volvía a
+`pending` con 3/3, el despachador no la repartía nunca y el cliente la veía
+`queued` para siempre. No se ponen los intentos a cero a propósito: el intento
+forma parte de la clave de idempotencia del broker y repetirlo devolvería la
+tarea que ya falló. Lo mismo se puede hacer desde la ventana («Desbloquear…»).
+
+Cada vuelta a `pending` suma `releases` en la tarjeta, y el runner lo mete en
+su clave de intento (D-03). Sin eso, soltar una tarjeta sin gastar intento (Core
+la deniega, el broker no puede cumplirla) y volver a reclamarla repetía la clave:
+el API devolvía el `claim` guardado sin reclamar y el runner enviaba al broker
+una tarjeta que seguía en `pending`.
+
 El cliente lo recibe hecho: `GET /api/v1/cards/{filename}` devuelve
 `"terminal": true|false`, y **cada evento del cursor también**. Un cliente que
 sondea ya no necesita llevar escrita la lista de estados finales — mientras sea

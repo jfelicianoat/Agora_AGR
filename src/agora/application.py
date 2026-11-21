@@ -256,6 +256,70 @@ class AgoraApplication:
         self._dispatcher_status = "idle"
         return outcomes
 
+    def unblock(self, filename: str, reason: str) -> Path:
+        """Devuelve a `pending` una tarjeta bloqueada (U-01).
+
+        Antes sólo se podía con `POST /admin/blocked/.../unblock` y el token de
+        administración: desde la ventana, una tarjeta bloqueada era un callejón.
+        """
+        motivo = _required_reason(reason)
+        destination = self.board.unblock(_plain_card_name(filename), actor="human", reason=motivo)
+        self._log("info", f"{filename}: desbloqueada — {motivo}")
+        return destination
+
+    def cancel(self, filename: str, reason: str) -> Path:
+        """Archiva como cancelada una tarjeta pendiente o en curso (U-01)."""
+        motivo = _required_reason(reason)
+        destination = self.board.cancel(_plain_card_name(filename), actor="human", reason=motivo)
+        self._log("info", f"{filename}: cancelada — {motivo}")
+        return destination
+
+    def artifacts(self, state: BoardState, filename: str) -> tuple[Path, ...]:
+        """Los resultados de la tarjeta que existen en disco **dentro del workspace** (U-02).
+
+        `paths` lo escribe quien cierra la tarjeta; una ruta fuera del workspace
+        no se ofrece nunca, como tampoco la sirve el API (A-3 del arbitraje).
+        """
+        paths = self.card_detail(state, filename).metadata.get("paths")
+        if not isinstance(paths, list):
+            return ()
+        found: list[Path] = []
+        for item in paths:
+            path = Path(str(item)).resolve()
+            if path.is_relative_to(self.workspace) and path.is_file():
+                found.append(path)
+        return tuple(found)
+
+    @staticmethod
+    def open_target(path: Path) -> Path:
+        """Qué abrir para enseñar un resultado: el fichero si es un documento, si no su carpeta.
+
+        Un runner puede subir artefactos con cualquier extensión; abrir un `.exe`
+        o un `.bat` con la aplicación asociada sería ejecutarlo (A-3).
+        """
+        return path if path.suffix.lower() in _DOCUMENT_SUFFIXES else path.parent
+
+    def explain(self, filename: str) -> str:
+        """Por qué una tarjeta pendiente avanza o no, en español (U-04).
+
+        Es la misma ronda simulada que hace el botón «Simular»: no escribe nada
+        y no hay un segundo cálculo que pueda divergir del despachador.
+        """
+        name = _plain_card_name(filename)
+        outcomes = Dispatcher(
+            self.board,
+            self.profiles_root,
+            self.launcher,
+            trusted_origins=self.trusted_origins,
+            max_dispatches_per_round=1_000_000,
+        ).run_once(dry_run=True)
+        outcome = next((item for item in outcomes if item.card == name), None)
+        if outcome is None:
+            return "—"
+        return _EXPLANATIONS.get(outcome.status, _OUTCOME_LABELS[outcome.status]) + (
+            f" ({outcome.reason})" if outcome.reason else ""
+        )
+
     def _card_census(self) -> tuple[tuple[CardSummary, ...], tuple[VisibleError, ...]]:
         cards: list[CardSummary] = []
         errors: list[VisibleError] = []
@@ -343,7 +407,36 @@ _OUTCOME_LABELS: dict[DispatchStatus, str] = {
     DispatchStatus.CONFLICT: "conflicto",
     DispatchStatus.ERROR: "error",
     DispatchStatus.RECOVERED: "rescatada",
+    DispatchStatus.MATERIALIZED: "programada creada",
 }
+
+
+#: Extensiones que «Abrir resultado» abre directamente; el resto abre la carpeta.
+_DOCUMENT_SUFFIXES = frozenset(
+    {".md", ".txt", ".json", ".csv", ".pdf", ".html", ".htm", ".yml", ".yaml", ".log",
+     ".png", ".jpg", ".jpeg", ".svg", ".xml", ".docx", ".xlsx"}
+)
+
+#: Lo que significa cada desenlace para quien mira una tarjeta pendiente.
+_EXPLANATIONS: dict[DispatchStatus, str] = {
+    DispatchStatus.WOULD_DISPATCH: "Lista: la ejecutará la próxima ronda de esta ventana",
+    DispatchStatus.SKIPPED: (
+        "En cola para otro ejecutor: si es de IA la recoge el runner del PC IA "
+        "cuando el tablero (Agora Tablero) está en marcha"
+    ),
+    DispatchStatus.WAITING_INPUT: "Parada: faltan ficheros de entrada",
+    DispatchStatus.UNMATCHED: "Parada: ningún perfil acepta esta petición",
+    DispatchStatus.AMBIGUOUS: "Parada: dos perfiles la aceptan por igual",
+    DispatchStatus.BLOCKED: "Parada: no se repartirá",
+    DispatchStatus.ERROR: "Error al leerla",
+}
+
+
+def _required_reason(reason: str) -> str:
+    motivo = reason.strip()
+    if not motivo:
+        raise ValueError("Hace falta un motivo: queda escrito en el Record de la tarjeta.")
+    return motivo
 
 
 def _card_summary(state: BoardState, path: Path, card: Card) -> CardSummary:

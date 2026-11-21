@@ -11,6 +11,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from agora import __version__
+from agora.api.contracts import RunnerOutcome
 from agora.broker.ai_os_core import POLICY_SCOPE, AgoraCoreGate
 from agora.broker.client import BrokerClient
 from agora.broker.contracts import BrokerPolicy
@@ -127,6 +128,19 @@ def _share_broker_token(core: AgoraCoreGate, source: SessionTokenSource) -> None
         print("AI OS Core: token del broker publicado", file=sys.stderr)
 
 
+def _guarded_run(runner: AiRunner) -> RunnerOutcome:
+    """Una vuelta del runner que no puede tumbar el proceso (D-06).
+
+    `run_once` traduce los fallos esperados; uno inesperado (una tarjeta en
+    curso ilegible, una respuesta con forma rara) salia del bucle y el runner
+    del PC IA dejaba de trabajar hasta que alguien lo reiniciara a mano.
+    """
+    try:
+        return runner.run_once()
+    except Exception as exc:
+        return RunnerOutcome(status="failed", detail=f"unexpected {type(exc).__name__}: {exc}")
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     review_config = (
@@ -228,7 +242,7 @@ def main(argv: list[str] | None = None) -> int:
                     runner.executor.client = replacement
                 if runner.core is not None and token_source is not None:
                     _share_broker_token(runner.core, token_source)
-                outcome = runner.run_once()
+                outcome = _guarded_run(runner)
                 print(outcome.model_dump_json())
                 if review_config.enabled:
                     print("Review gate metrics: " + json.dumps(gate.metrics.snapshot()),
